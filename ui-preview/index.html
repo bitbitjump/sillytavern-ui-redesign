@@ -8,7 +8,7 @@
     <link href="../public/webfonts/NotoSans/stylesheet.css" rel="stylesheet">
     <link href="../public/css/fontawesome.min.css" rel="stylesheet">
     <link href="../public/css/solid.min.css" rel="stylesheet">
-    <link href="app.css?v=6" rel="stylesheet">
+    <link href="app.css?v=7" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell" id="app-shell">
@@ -93,12 +93,13 @@
                 </form>
             </footer>
         </main>
-        <aside class="utility-panel" id="utility-panel" aria-hidden="true" aria-label="功能面板">
-            <header class="utility-panel__head"><div><span class="eyebrow" id="panel-eyebrow">酒館</span><h2 id="panel-title">功能</h2></div><button class="icon-button" id="panel-close" type="button" aria-label="關閉面板"><i class="fa-solid fa-xmark"></i></button></header>
+        <dialog class="utility-panel" id="utility-panel" aria-labelledby="panel-title">
+            <header class="utility-panel__head"><div><span class="eyebrow" id="panel-eyebrow">酒館</span><h2 id="panel-title">功能</h2></div><button class="icon-button" id="panel-close" type="button" aria-label="關閉面板" autofocus><i class="fa-solid fa-xmark"></i></button></header>
             <div class="utility-panel__content" id="panel-content"></div>
-        </aside>
+            <p class="utility-panel__status" id="panel-status" role="status"></p>
+        </dialog>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
 </body>
 </html>

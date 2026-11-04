@@ -7,6 +7,7 @@
   const panelTitle = $('#panel-title');
   const panelEyebrow = $('#panel-eyebrow');
   const panelContent = $('#panel-content');
+  const panelStatus = $('#panel-status');
   const conversation = $('#conversation');
   const composer = $('#composer');
   const input = $('#message-input');
@@ -44,13 +45,16 @@
   };
 
   function showToast(message) {
+    if (panel.open) {
+      panelStatus.textContent = message;
+      return;
+    }
     clearTimeout(toastTimer);
     toast.textContent = message;
     toast.classList.add('is-visible');
     toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 1800);
   }
   function openSidebar() {
-    closePanel();
     if (isNarrow()) shell.classList.add('sidebar-open'); else shell.classList.remove('sidebar-collapsed');
   }
   function closeSidebar() {
@@ -58,14 +62,17 @@
     if (!isNarrow()) shell.classList.add('sidebar-collapsed');
   }
   function openPanel(kind) {
+    if (panel.open) return;
     const data = panelData[kind] || panelData.tools;
-    shell.classList.remove('sidebar-open');
-    panelEyebrow.textContent = data[0]; panelTitle.textContent = data[1]; panelContent.innerHTML = data[2];
-    shell.classList.add('panel-open'); panel.setAttribute('aria-hidden', 'false');
-    $('#panel-close').focus({ preventScroll: true });
+    panelEyebrow.textContent = data[0];
+    panelTitle.textContent = data[1];
+    panelContent.innerHTML = data[2];
+    panelStatus.textContent = '';
+    panel.showModal();
+    panelContent.scrollTop = 0;
   }
-  function closePanel() { shell.classList.remove('panel-open'); panel.setAttribute('aria-hidden', 'true'); }
-  function closeOverlays() { shell.classList.remove('sidebar-open'); closePanel(); }
+  function closePanel() { panel.close(); }
+  function closeFloatingSidebar() { shell.classList.remove('sidebar-open'); }
   function resizeInput() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`; }
   function escapeHtml(value) { const el = document.createElement('div'); el.textContent = value; return el.innerHTML; }
   function messageText(article) { return $('.message__body', article)?.innerText.trim() || ''; }
@@ -106,25 +113,42 @@
     conversation.appendChild(article); conversation.scrollTop = conversation.scrollHeight; return article;
   }
 
-  $('#sidebar-open').onclick = openSidebar; $('#sidebar-close').onclick = closeSidebar; $('#panel-close').onclick = closePanel; $('#attach-button').onclick = () => openPanel('tools'); $('#scrim').onclick = closeOverlays;
+  $('#sidebar-open').onclick = openSidebar; $('#sidebar-close').onclick = closeSidebar; $('#panel-close').onclick = closePanel; $('#attach-button').onclick = () => openPanel('tools'); $('#scrim').onclick = closeFloatingSidebar;
   document.addEventListener('click', (event) => {
     const opener = event.target.closest('[data-panel]'); if (opener) openPanel(opener.dataset.panel);
     const action = event.target.closest('[data-action]'); if (action) { const article = action.closest('.message'); if (action.dataset.action === 'copy') copyMessage(article); if (action.dataset.action === 'edit') editMessage(article); if (action.dataset.action === 'regenerate') regenerate(article); }
     const nav = event.target.closest('[data-version-nav]'); if (nav) { const article = nav.closest('.message'); article.dataset.version = String(Number(article.dataset.version || 0) + (nav.dataset.versionNav === 'prev' ? -1 : 1)); renderVersion(article); }
-    const role = event.target.closest('[data-select-role]'); if (role) { showToast(`已切換為「${role.dataset.selectRole}」`); closePanel(); }
-    const model = event.target.closest('[data-select-model]'); if (model) { if (model.dataset.selectModel === '新增模型連線') showToast('模型連線設定會在下一階段接上'); else { $('#current-model').textContent = model.dataset.selectModel; showToast(`已選擇 ${model.dataset.selectModel}`); closePanel(); } }
+    const role = event.target.closest('[data-select-role]');
+    if (role) {
+      closePanel();
+      showToast(`已切換為「${role.dataset.selectRole}」`);
+    }
+    const model = event.target.closest('[data-select-model]');
+    if (model?.dataset.selectModel === '新增模型連線') {
+      showToast('模型連線設定會在下一階段接上');
+    } else if (model) {
+      $('#current-model').textContent = model.dataset.selectModel;
+      closePanel();
+      showToast(`已選擇 ${model.dataset.selectModel}`);
+    }
     const tool = event.target.closest('[data-tool]'); if (tool) showToast(`${tool.dataset.tool}（互動展示）`);
     const toggle = event.target.closest('.switch'); if (toggle) toggle.classList.toggle('is-on');
   });
   $$('.chat-row').forEach(row => row.onclick = event => {
     if (event.target.closest('.row-more')) { showToast('聊天選單：重新命名、匯出、刪除'); return; }
     $$('.chat-row').forEach(item => item.classList.remove('is-active')); row.classList.add('is-active'); $('#chat-title').textContent = row.dataset.title;
-    if (isNarrow()) closeOverlays(); showToast(`已切換到「${row.dataset.title}」`);
+    if (isNarrow()) closeFloatingSidebar(); showToast(`已切換到「${row.dataset.title}」`);
   });
-  $('#new-chat').onclick = () => { $$('.chat-row').forEach(item => item.classList.remove('is-active')); $('#chat-title').textContent = '新聊天'; if (isNarrow()) closeOverlays(); input.focus(); showToast('已建立新聊天'); };
+  $('#new-chat').onclick = () => { $$('.chat-row').forEach(item => item.classList.remove('is-active')); $('#chat-title').textContent = '新聊天'; if (isNarrow()) closeFloatingSidebar(); input.focus(); showToast('已建立新聊天'); };
   $('#chat-search').oninput = event => { const query = event.target.value.trim().toLocaleLowerCase(); $$('.chat-row').forEach(row => { row.hidden = Boolean(query && !row.dataset.title.toLocaleLowerCase().includes(query)); }); $$('.chat-group').forEach(group => { group.hidden = !$$('.chat-row', group).some(row => !row.hidden); }); };
   composer.onsubmit = event => { event.preventDefault(); const text = input.value.trim(); if (!text) return; addMessage(text, 'user'); input.value = ''; resizeInput(); setTimeout(() => addMessage('這是介面互動展示；模型串接完成後，回覆會從你的模型服務送回這裡。', 'assistant'), 380); };
   input.oninput = resizeInput; input.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); } };
-  document.addEventListener('keydown', event => { if (event.key === 'Escape') closeOverlays(); if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#new-chat').click(); } });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !panel.open) closeFloatingSidebar();
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (!panel.open) $('#new-chat').click();
+    }
+  });
   addEventListener('resize', () => { if (!isNarrow()) shell.classList.remove('sidebar-open'); });
 })();
