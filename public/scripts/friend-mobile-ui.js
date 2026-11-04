@@ -64,6 +64,15 @@
         }
     }
 
+    function setMobileSidebar(open) {
+        const shouldOpen = typeof open === 'boolean'
+            ? open
+            : !document.body.classList.contains('friend-mobile-sidebar-open');
+        document.body.classList.toggle('friend-mobile-sidebar-open', shouldOpen);
+        document.getElementById('friend-desktop-sidebar')?.setAttribute('aria-hidden', String(!shouldOpen && mobileQuery.matches));
+        document.querySelector('[data-friend-action="mobileSidebar"]')?.setAttribute('aria-expanded', String(shouldOpen));
+    }
+
     function createAction(action, icon, label, description) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -102,17 +111,24 @@
                 <span id="friend-mobile-status" data-state="offline" role="status" aria-live="polite">正在確認連線</span>
             </span>`;
 
+        const sidebarButton = document.createElement('button');
+        sidebarButton.type = 'button';
+        sidebarButton.className = 'friend-mobile-icon-button';
+        sidebarButton.dataset.friendAction = 'mobileSidebar';
+        sidebarButton.setAttribute('aria-label', '開啟聊天室');
+        sidebarButton.setAttribute('aria-expanded', 'false');
+        sidebarButton.innerHTML = '<i class="fa-solid fa-bars" aria-hidden="true"></i>';
+        sidebarButton.addEventListener('click', () => setMobileSidebar());
+
         const actions = document.createElement('nav');
         actions.className = 'friend-mobile-actions';
-        actions.setAttribute('aria-label', '聊天捷徑');
+        actions.setAttribute('aria-label', '聊天操作');
         actions.append(
-            createAction('chatList', 'fa-message', '聊天', '開啟聊天列表'),
-            createAction('newChat', 'fa-square-plus', '新聊天', '建立新的獨立聊天'),
             createAction('characters', 'fa-user-group', '角色', '選擇或管理角色'),
             createAction('tools', 'fa-ellipsis', '更多', '開啟完整設定工具'),
         );
 
-        header.append(context, actions);
+        header.append(sidebarButton, context, actions);
         topBar.append(header);
     }
 
@@ -188,13 +204,20 @@
         sidebar.querySelectorAll('[data-friend-sidebar-toggle]').forEach((button) => button.addEventListener('click', () => toggleDesktopSidebar()));
         sidebar.querySelector('#friend-sidebar-search-input')?.addEventListener('input', renderRecentChats);
         document.body.prepend(sidebar);
+
+        const backdrop = document.createElement('button');
+        backdrop.type = 'button';
+        backdrop.id = 'friend-mobile-sidebar-backdrop';
+        backdrop.setAttribute('aria-label', '關閉聊天室');
+        backdrop.addEventListener('click', () => setMobileSidebar(false));
+        document.body.prepend(backdrop);
     }
 
     function getPreviewChats() {
         return [
-            { chat_name: '雨夜重逢 · 第一章', char_name: '書店寫作助手', date_short: '剛剛', chat_items: 2, icon: 'fa-cloud-rain', preview: true, active: true },
-            { chat_name: '舊書店的早晨', char_name: '書店寫作助手', date_short: '昨天', chat_items: 18, icon: 'fa-book-open', preview: true },
-            { chat_name: '角色設定討論', char_name: '世界觀整理員', date_short: '10 月 30 日', chat_items: 9, icon: 'fa-mug-hot', preview: true },
+            { chat_name: '雨夜重逢 · 第一章', char_name: '書店寫作助手', date_short: '剛剛', group_label: '今天', chat_items: 2, icon: 'fa-cloud-rain', preview: true, active: true },
+            { chat_name: '舊書店的早晨', char_name: '書店寫作助手', date_short: '昨天', group_label: '昨天', chat_items: 18, icon: 'fa-book-open', preview: true },
+            { chat_name: '角色設定討論', char_name: '世界觀整理員', date_short: '10 月 30 日', group_label: '過去 7 天', chat_items: 9, icon: 'fa-mug-hot', preview: true },
         ];
     }
 
@@ -238,6 +261,7 @@
                 document.getElementById('rm_button_selected_ch').querySelector('h2').textContent = chat.char_name;
                 renderRecentChats();
                 updateContext();
+                setMobileSidebar(false);
                 return;
             }
             if (!recentChatActions) return;
@@ -248,6 +272,7 @@
             }
             renderRecentChats();
             updateContext();
+            setMobileSidebar(false);
         });
         return button;
     }
@@ -265,7 +290,18 @@
             list.append(empty);
             return;
         }
-        matches.forEach((chat) => list.append(createRecentChatButton(chat)));
+        let previousGroup = '';
+        matches.forEach((chat, index) => {
+            const group = chat.group_label || (index === 0 ? '最近' : '');
+            if (group && group !== previousGroup) {
+                const label = document.createElement('div');
+                label.className = 'friend-sidebar-group-label';
+                label.textContent = group;
+                list.append(label);
+                previousGroup = group;
+            }
+            list.append(createRecentChatButton(chat));
+        });
     }
 
     async function loadRecentChats() {
@@ -316,10 +352,9 @@
         actions.className = 'friend-desktop-actions';
         actions.setAttribute('aria-label', '聊天捷徑');
         actions.append(
-            createDesktopAction('chatList', 'fa-message', '聊天列表', '開啟聊天列表'),
-            createDesktopAction('newChat', 'fa-square-plus', '新聊天', '建立新的獨立聊天'),
-            createDesktopAction('characters', 'fa-user-group', '選擇角色', '選擇或管理角色'),
-            createDesktopAction('settings', 'fa-sliders', '模型設定', '開啟模型與回覆設定'),
+            createDesktopAction('characters', 'fa-user-group', '角色', '選擇或管理角色'),
+            createDesktopAction('settings', 'fa-sliders', '模型', '開啟模型與回覆設定'),
+            createDesktopAction('desktopTools', 'fa-ellipsis', '更多', '開啟完整設定工具'),
         );
 
         contextbar.append(sidebarToggle, context, actions);
@@ -428,35 +463,100 @@
         if (optionsButton) {
             optionsButton.classList.remove('fa-bars');
             optionsButton.classList.add('fa-plus');
-            optionsButton.title = '更多訊息工具';
+            optionsButton.title = '新增附件或開啟工具';
         }
-        makeDivControlAccessible('options_button', '開啟更多訊息工具');
+        makeDivControlAccessible('options_button', '新增附件或開啟工具');
         makeDivControlAccessible('send_but', '傳送訊息');
         makeDivControlAccessible('mes_stop', '停止產生回覆');
 
-        const leftSendForm = document.getElementById('leftSendForm');
-        if (leftSendForm && !document.getElementById('friend-attach-button')) {
-            const attachButton = document.createElement('button');
-            attachButton.id = 'friend-attach-button';
-            attachButton.type = 'button';
-            attachButton.className = 'friend-composer-button';
-            attachButton.setAttribute('aria-label', '上傳檔案或圖片');
-            attachButton.title = '上傳檔案或圖片';
-            attachButton.innerHTML = '<i class="fa-solid fa-paperclip" aria-hidden="true"></i>';
-            attachButton.addEventListener('click', () => {
-                const nativeAttachButton = document.getElementById('attachFile');
-                if (nativeAttachButton) {
-                    nativeAttachButton.click();
+        document.getElementById('friend-attach-button')?.remove();
+    }
+
+    function dispatchPreviewMessageAction(message, action) {
+        message.dispatchEvent(new CustomEvent(`friend-preview-${action}`, {
+            bubbles: true,
+            detail: { message },
+        }));
+    }
+
+    function createMessageAction(icon, label, action) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'friend-message-action';
+        button.dataset.messageAction = action;
+        button.setAttribute('aria-label', label);
+        button.title = label;
+        button.innerHTML = `<i class="fa-solid ${icon}" aria-hidden="true"></i><span>${label}</span>`;
+        return button;
+    }
+
+    function enhanceMessageActions() {
+        document.querySelectorAll('#chat .mes').forEach((message) => {
+            if (message.dataset.friendActions === 'true' || message.getAttribute('is_system') === 'true') {
+                return;
+            }
+
+            const block = message.querySelector('.mes_block');
+            const text = message.querySelector('.mes_text');
+            if (!block || !text) return;
+
+            message.dataset.friendActions = 'true';
+            const isUser = message.getAttribute('is_user') === 'true';
+            const actions = document.createElement('div');
+            actions.className = 'friend-message-actions';
+
+            const copy = createMessageAction('fa-copy', '複製', 'copy');
+            copy.addEventListener('click', async () => {
+                const nativeCopy = message.querySelector('.mes_copy');
+                if (nativeCopy && !isPreview) {
+                    nativeCopy.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
                     return;
                 }
-                if (isPreview) {
-                    optionsButton?.click();
-                    return;
+                try {
+                    await navigator.clipboard.writeText(text.innerText.trim());
+                } catch {
+                    // Clipboard access may be unavailable in embedded previews.
                 }
-                document.getElementById('file_form_input')?.click();
+                dispatchPreviewMessageAction(message, 'copy');
             });
-            leftSendForm.prepend(attachButton);
-        }
+            actions.append(copy);
+
+            if (isUser) {
+                const edit = createMessageAction('fa-pen', '修改', 'edit');
+                edit.addEventListener('click', () => {
+                    const nativeEdit = message.querySelector('.mes_edit');
+                    if (nativeEdit && !isPreview) {
+                        nativeEdit.click();
+                        return;
+                    }
+                    dispatchPreviewMessageAction(message, 'edit');
+                });
+                actions.append(edit);
+            } else {
+                const regenerate = createMessageAction('fa-rotate-right', '重新回覆', 'regenerate');
+                regenerate.addEventListener('click', () => {
+                    const nativeSwipe = message.querySelector('.swipe_right');
+                    if (nativeSwipe && !isPreview) {
+                        nativeSwipe.click();
+                        return;
+                    }
+                    if (!isPreview) {
+                        document.getElementById('option_regenerate')?.click();
+                        return;
+                    }
+                    dispatchPreviewMessageAction(message, 'regenerate');
+                });
+                actions.append(regenerate);
+            }
+
+            const version = document.createElement('span');
+            version.className = 'friend-message-version';
+            const nativeCounter = message.querySelector('.swipes-counter');
+            version.textContent = message.dataset.friendVersion || nativeCounter?.textContent?.trim() || '1 / 1';
+            version.title = '所有回覆版本都會保留';
+            actions.append(version);
+            block.append(actions);
+        });
     }
 
     function updateViewport() {
@@ -480,7 +580,10 @@
     function observeUiState() {
         const observer = new MutationObserver(() => {
             window.clearTimeout(contextTimer);
-            contextTimer = window.setTimeout(updateContext, 30);
+            contextTimer = window.setTimeout(() => {
+                updateContext();
+                enhanceMessageActions();
+            }, 30);
         });
 
         const chat = document.getElementById('chat');
@@ -508,6 +611,7 @@
         void loadRecentChats();
         labelSettingsTools();
         enhanceComposer();
+        enhanceMessageActions();
         observeUiState();
         applyMode();
 
@@ -522,6 +626,7 @@
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
                 closeTools();
+                setMobileSidebar(false);
             }
         });
 
