@@ -674,6 +674,30 @@
     }
 }
 
+/* The composer is one surface; suppress nested browser focus rings and borders. */
+body.friend-mobile-ui #send_textarea,
+body.friend-desktop-ui #send_textarea,
+body.friend-mobile-ui #send_textarea:focus,
+body.friend-desktop-ui #send_textarea:focus,
+body.friend-mobile-ui #send_textarea:focus-visible,
+body.friend-desktop-ui #send_textarea:focus-visible {
+    border: 0 !important;
+    outline: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body.friend-mobile-ui #send_form:has(#send_textarea:focus-visible),
+body.friend-desktop-ui #send_form:has(#send_textarea:focus-visible) {
+    border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 74%, var(--SmartThemeEmColor) 26%) !important;
+    outline: 0 !important;
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--black50a) 54%, transparent), inset 0 1px 0 var(--white10a) !important;
+}
+
+#friend-mobile-sidebar-backdrop {
+    cursor: default;
+}
+
 /* Message actions stay theme-aware at every responsive width. */
 .friend-message-actions {
     display: flex;

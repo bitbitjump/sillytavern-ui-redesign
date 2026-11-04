@@ -23,6 +23,9 @@
         }
 
         closeTools();
+        if (mobileQuery.matches) {
+            setMobileSidebar(false);
+        }
         control.dispatchEvent(new MouseEvent('click', {
             bubbles: true,
             cancelable: true,
@@ -69,6 +72,10 @@
             ? open
             : !document.body.classList.contains('friend-mobile-sidebar-open');
         document.body.classList.toggle('friend-mobile-sidebar-open', shouldOpen);
+        if (shouldOpen) {
+            closeTools();
+            document.getElementById('preview-panel-close')?.click();
+        }
         document.getElementById('friend-desktop-sidebar')?.setAttribute('aria-hidden', String(!shouldOpen && mobileQuery.matches));
         document.querySelector('[data-friend-action="mobileSidebar"]')?.setAttribute('aria-expanded', String(shouldOpen));
     }
@@ -578,6 +585,7 @@
         document.body.classList.toggle('friend-desktop-ui', !mobileQuery.matches);
         if (!mobileQuery.matches) {
             closeTools();
+            setMobileSidebar(false);
         }
         updateViewport();
         updateContext();
@@ -637,6 +645,15 @@
         });
 
         document.addEventListener('pointerdown', (event) => {
+            if (mobileQuery.matches && document.body.classList.contains('friend-mobile-sidebar-open')) {
+                const sidebar = document.getElementById('friend-desktop-sidebar');
+                const toggle = event.target.closest?.('[data-friend-action="mobileSidebar"]');
+                if (sidebar && !sidebar.contains(event.target) && !toggle) {
+                    setMobileSidebar(false);
+                    return;
+                }
+            }
+
             if (!document.body.classList.contains('friend-mobile-tools-open') && !document.body.classList.contains('friend-desktop-tools-open')) {
                 return;
             }

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#171411">
+    <title>酒館 — AI 故事與角色聊天</title>
+    <link href="../public/webfonts/NotoSans/stylesheet.css" rel="stylesheet">
+    <link href="../public/css/fontawesome.min.css" rel="stylesheet">
+    <link href="../public/css/solid.min.css" rel="stylesheet">
+    <link href="app.css?v=6" rel="stylesheet">
+</head>
+<body>
+    <div class="app-shell" id="app-shell">
+        <aside class="sidebar" id="sidebar" aria-label="聊天側欄">
+            <div class="sidebar__head">
+                <a class="brand" href="#" aria-label="酒館首頁">
+                    <span class="brand__mark"><i class="fa-solid fa-martini-glass-citrus"></i></span>
+                    <span><strong>酒館</strong><small>AI 故事與角色聊天</small></span>
+                </a>
+                <button class="icon-button sidebar__collapse" id="sidebar-close" type="button" title="收起側欄" aria-label="收起側欄"><i class="fa-solid fa-angles-left"></i></button>
+            </div>
+            <div class="sidebar__primary">
+                <button class="new-chat" id="new-chat" type="button"><i class="fa-solid fa-pen-to-square"></i><span>開始新聊天</span><kbd>Ctrl K</kbd></button>
+                <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="chat-search" type="search" placeholder="搜尋聊天" autocomplete="off"></label>
+            </div>
+            <nav class="chat-history" id="chat-history" aria-label="聊天記錄">
+                <section class="chat-group" data-group="今天">
+                    <h2>今天</h2>
+                    <button class="chat-row is-active" type="button" data-title="雨夜重逢 · 第一章"><i class="fa-solid fa-cloud-rain"></i><span>雨夜重逢 · 第一章</span><i class="fa-solid fa-ellipsis row-more"></i></button>
+                    <button class="chat-row" type="button" data-title="替角色修改對白"><i class="fa-solid fa-comments"></i><span>替角色修改對白</span><i class="fa-solid fa-ellipsis row-more"></i></button>
+                </section>
+                <section class="chat-group" data-group="昨天">
+                    <h2>昨天</h2>
+                    <button class="chat-row" type="button" data-title="舊書店的早晨"><i class="fa-solid fa-book-open"></i><span>舊書店的早晨</span><i class="fa-solid fa-ellipsis row-more"></i></button>
+                </section>
+                <section class="chat-group" data-group="過去 7 天">
+                    <h2>過去 7 天</h2>
+                    <button class="chat-row" type="button" data-title="角色設定討論"><i class="fa-solid fa-mug-hot"></i><span>角色設定討論</span><i class="fa-solid fa-ellipsis row-more"></i></button>
+                </section>
+            </nav>
+            <div class="sidebar__footer">
+                <button class="footer-action" type="button" data-panel="roles"><i class="fa-solid fa-user-group"></i><span>角色</span></button>
+                <button class="footer-action" type="button" data-panel="models"><i class="fa-solid fa-sliders"></i><span>模型</span></button>
+                <button class="footer-action" type="button" data-panel="tools"><i class="fa-solid fa-border-all"></i><span>工具</span></button>
+            </div>
+        </aside>
+        <button class="scrim" id="scrim" type="button" aria-label="關閉面板" tabindex="-1"></button>
+        <main class="workspace">
+            <header class="topbar">
+                <div class="topbar__side"><button class="icon-button sidebar__open" id="sidebar-open" type="button" aria-label="開啟側欄" title="開啟側欄"><i class="fa-solid fa-bars"></i></button></div>
+                <button class="model-selector" type="button" data-panel="models"><span id="current-model">Tavern Story 7B</span><i class="fa-solid fa-chevron-down"></i></button>
+                <div class="topbar__actions">
+                    <span class="connection-status"><i></i>展示模式</span>
+                    <button class="icon-button" type="button" data-panel="roles" aria-label="角色" title="角色"><i class="fa-solid fa-user-group"></i></button>
+                    <button class="icon-button" type="button" data-panel="settings" aria-label="聊天設定" title="聊天設定"><i class="fa-solid fa-ellipsis"></i></button>
+                </div>
+            </header>
+            <section class="conversation" id="conversation" aria-live="polite">
+                <div class="conversation__intro">
+                    <div class="assistant-avatar"><i class="fa-solid fa-feather-pointed"></i></div>
+                    <div><h1 id="chat-title">雨夜重逢 · 第一章</h1><p>書店寫作助手 <span>·</span> 擅長安靜、細膩的敘事</p></div>
+                </div>
+                <article class="message message--user" data-message-id="user-1">
+                    <div class="message__body"><p>林岑是書店店主，周澈拿著藍傘，兩人五年未見。請先用一句話確認，再幫我接著寫一段安靜、有雨聲的重逢場景。</p></div>
+                    <div class="message-actions" aria-label="訊息操作">
+                        <button type="button" data-action="copy" title="複製"><i class="fa-solid fa-copy"></i><span>複製</span></button>
+                        <button type="button" data-action="edit" title="編輯"><i class="fa-solid fa-pen"></i><span>編輯</span></button>
+                    </div>
+                </article>
+                <article class="message message--assistant" data-message-id="assistant-1" data-version="0">
+                    <div class="message__identity"><div class="assistant-avatar assistant-avatar--small"><i class="fa-solid fa-feather-pointed"></i></div><div><strong>書店寫作助手</strong><small>剛剛</small></div></div>
+                    <div class="message__body version-content">
+                        <p>已記住：林岑是書店店主，周澈拿著藍傘，兩人五年未見。</p>
+                        <p>雨點沿著書店的遮雨棚一格一格落下，像有人在屋簷上輕敲一首太慢的曲子。林岑抬頭時，周澈正站在玻璃門外，肩上沾著細碎水光，那把藍傘卻仍和五年前一樣，舊得讓人一眼就認出來。</p>
+                        <blockquote>「還有營業嗎？」他隔著雨幕問。</blockquote><p>林岑沒有立刻回答，只是伸手替他推開了門。</p>
+                    </div>
+                    <div class="message-actions" aria-label="回覆操作">
+                        <button type="button" data-action="copy" title="複製"><i class="fa-solid fa-copy"></i><span>複製</span></button>
+                        <button type="button" data-action="regenerate" title="重新回覆"><i class="fa-solid fa-rotate-right"></i><span>重新回覆</span></button>
+                        <div class="version-switch" hidden><button type="button" data-version-nav="prev" aria-label="上一個版本"><i class="fa-solid fa-chevron-left"></i></button><span class="version-label">1 / 1</span><button type="button" data-version-nav="next" aria-label="下一個版本"><i class="fa-solid fa-chevron-right"></i></button></div>
+                    </div>
+                </article>
+            </section>
+            <footer class="composer-wrap">
+                <form class="composer" id="composer">
+                    <div class="composer__main">
+                        <button class="attach-button" id="attach-button" type="button" aria-label="附加檔案與工具" title="附加檔案與工具"><i class="fa-solid fa-plus"></i></button>
+                        <textarea id="message-input" rows="1" placeholder="傳訊息給書店寫作助手" aria-label="訊息"></textarea>
+                        <button class="send-button" id="send-button" type="submit" aria-label="傳送"><i class="fa-solid fa-arrow-up"></i></button>
+                    </div>
+                    <div class="composer__meta"><div><button type="button" data-panel="tools"><i class="fa-solid fa-wand-magic-sparkles"></i> 工具</button><button type="button" data-panel="roles"><i class="fa-solid fa-feather"></i> 書店寫作助手</button></div><span>AI 可能會犯錯，請確認重要內容。</span></div>
+                </form>
+            </footer>
+        </main>
+        <aside class="utility-panel" id="utility-panel" aria-hidden="true" aria-label="功能面板">
+            <header class="utility-panel__head"><div><span class="eyebrow" id="panel-eyebrow">酒館</span><h2 id="panel-title">功能</h2></div><button class="icon-button" id="panel-close" type="button" aria-label="關閉面板"><i class="fa-solid fa-xmark"></i></button></header>
+            <div class="utility-panel__content" id="panel-content"></div>
+        </aside>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js?v=6"></script>
+</body>
+</html>
