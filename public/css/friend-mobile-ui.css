@@ -1,0 +1,1127 @@
+/*
+ * Friend mobile UI
+ * A small, theme-aware mobile navigation and composer layer for SillyTavern.
+ * All rules are scoped to the mobile breakpoint so the desktop interface stays unchanged.
+ */
+
+#friend-mobile-header {
+    display: none;
+}
+
+#friend-desktop-contextbar {
+    display: none;
+}
+
+#friend-desktop-sidebar {
+    display: none;
+}
+
+@media screen and (min-width: 821px) {
+    :root {
+        --friend-sidebar-width: 268px;
+        --friend-desktop-width: min(900px, calc(100dvw - var(--friend-sidebar-width) - 48px));
+        --friend-desktop-surface: color-mix(in srgb, var(--SmartThemeBlurTintColor) 94%, #16120f 6%);
+        --friend-desktop-accent: color-mix(in srgb, var(--SmartThemeQuoteColor) 78%, #d6a45c 22%);
+    }
+
+    body.friend-desktop-ui {
+        --topBarBlockSize: 0px;
+    }
+
+    body.friend-desktop-ui #top-bar {
+        display: none;
+    }
+
+    body.friend-desktop-ui #top-settings-holder {
+        box-sizing: border-box;
+        display: none;
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        left: auto;
+        z-index: 4006;
+        width: min(620px, calc(100dvw - var(--friend-sidebar-width) - 42px));
+        height: auto;
+        max-height: calc(100dvh - 28px);
+        padding: 12px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        overflow-y: auto;
+        border: 1px solid var(--SmartThemeBorderColor);
+        border-radius: 16px;
+        background: color-mix(in srgb, var(--friend-desktop-surface) 98%, transparent);
+        box-shadow: 0 24px 70px var(--black70a);
+        backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 2));
+    }
+
+    body.friend-desktop-tools-open #top-settings-holder {
+        display: grid;
+    }
+
+    body.friend-desktop-ui #top-settings-holder > .drawer {
+        display: block;
+        width: 100%;
+        min-width: 0;
+    }
+
+    body.friend-desktop-ui #top-settings-holder .drawer-toggle {
+        box-sizing: border-box;
+        display: flex;
+        width: 100%;
+        min-height: 68px;
+        padding: 8px 5px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        overflow: hidden;
+        border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 66%, transparent);
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--SmartThemeChatTintColor) 72%, transparent);
+        transition: background-color 120ms ease, transform 120ms ease;
+    }
+
+    body.friend-desktop-ui #top-settings-holder .drawer-toggle::after {
+        width: 100%;
+        overflow: hidden;
+        content: attr(data-friend-label);
+        font-family: var(--mainFontFamily);
+        font-size: 10px;
+        line-height: 1.2;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    body.friend-desktop-ui #top-settings-holder .drawer-toggle:hover {
+        background: color-mix(in srgb, var(--friend-desktop-accent) 14%, transparent);
+        transform: translateY(-1px);
+    }
+
+    body.friend-desktop-ui #top-settings-holder .drawer-icon {
+        padding: 0;
+        font-size: 19px;
+        opacity: 0.82;
+    }
+
+    body.friend-desktop-ui #sheld {
+        top: 0;
+        right: 0;
+        left: var(--friend-sidebar-width) !important;
+        width: auto;
+        min-width: 0;
+        max-width: none;
+        height: 100dvh;
+        max-height: 100dvh;
+        margin: 0;
+        overflow: hidden;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    #friend-desktop-sidebar {
+        box-sizing: border-box;
+        display: flex;
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 3100;
+        width: var(--friend-sidebar-width);
+        padding: 16px 12px 14px;
+        flex-direction: column;
+        color: var(--SmartThemeBodyColor);
+        border-right: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 56%, transparent);
+        background: color-mix(in srgb, var(--friend-desktop-surface) 97%, #111 3%);
+        box-shadow: 12px 0 40px color-mix(in srgb, var(--black50a) 48%, transparent);
+        transition: transform 180ms ease, visibility 180ms ease;
+    }
+
+    body.friend-desktop-ui #sheld {
+        transition: left 180ms ease;
+    }
+
+    body.friend-sidebar-collapsed #friend-desktop-sidebar {
+        visibility: hidden;
+        transform: translateX(-100%);
+    }
+
+    body.friend-sidebar-collapsed #sheld {
+        left: 0 !important;
+    }
+
+    .friend-sidebar-brand {
+        display: flex;
+        min-height: 48px;
+        padding: 4px 8px 13px;
+        align-items: center;
+        gap: 11px;
+    }
+
+    .friend-sidebar-mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        place-items: center;
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--friend-desktop-accent) 20%, var(--SmartThemeChatTintColor));
+        color: var(--friend-desktop-accent);
+    }
+
+    .friend-sidebar-brand > span:nth-child(2) {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .friend-sidebar-brand-action,
+    .friend-sidebar-chat-heading button {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        margin: 0;
+        padding: 0;
+        flex: 0 0 30px;
+        place-items: center;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--SmartThemeBodyColor);
+        opacity: 0.58;
+    }
+
+    .friend-sidebar-brand-action:hover,
+    .friend-sidebar-chat-heading button:hover {
+        background: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, transparent);
+        opacity: 1;
+    }
+
+    .friend-sidebar-brand strong {
+        font-family: Georgia, 'Noto Serif TC', serif;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+    }
+
+    .friend-sidebar-brand small {
+        color: var(--SmartThemeBodyColor);
+        font-size: 10px;
+        font-weight: 400;
+        opacity: 0.5;
+    }
+
+    .friend-sidebar-new {
+        display: flex;
+        width: 100%;
+        min-height: 42px;
+        padding: 0 13px;
+        align-items: center;
+        gap: 10px;
+        border: 1px solid color-mix(in srgb, var(--friend-desktop-accent) 45%, var(--SmartThemeBorderColor));
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--friend-desktop-accent) 13%, var(--SmartThemeChatTintColor));
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        text-align: left;
+    }
+
+    .friend-sidebar-new:hover,
+    .friend-sidebar-chat:hover,
+    .friend-sidebar-utility:hover {
+        background: color-mix(in srgb, var(--friend-desktop-accent) 12%, var(--SmartThemeChatTintColor));
+    }
+
+    .friend-sidebar-search {
+        box-sizing: border-box;
+        display: flex;
+        min-height: 38px;
+        margin-top: 9px;
+        padding: 0 11px;
+        align-items: center;
+        gap: 9px;
+        border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 55%, transparent);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--SmartThemeChatTintColor) 50%, transparent);
+        color: var(--SmartThemeBodyColor);
+    }
+
+    .friend-sidebar-search:focus-within {
+        border-color: color-mix(in srgb, var(--friend-desktop-accent) 58%, var(--SmartThemeBorderColor));
+        background: color-mix(in srgb, var(--SmartThemeChatTintColor) 82%, transparent);
+    }
+
+    .friend-sidebar-search i {
+        font-size: 12px;
+        opacity: 0.46;
+    }
+
+    .friend-sidebar-search input {
+        width: 100%;
+        min-width: 0;
+        height: 36px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        font-size: 12px;
+        box-shadow: none;
+    }
+
+    .friend-sidebar-search input::placeholder {
+        color: var(--SmartThemeBodyColor);
+        opacity: 0.42;
+    }
+
+    .friend-sidebar-chat-heading {
+        display: flex;
+        min-height: 34px;
+        margin-top: 9px;
+        padding: 0 3px 0 9px;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--SmartThemeBodyColor);
+        font-size: 10px;
+        font-weight: 750;
+        letter-spacing: 0.11em;
+        opacity: 0.66;
+        text-transform: uppercase;
+    }
+
+    .friend-sidebar-chat-list {
+        display: flex;
+        min-height: 92px;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 3px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-width: thin;
+    }
+
+    .friend-sidebar-chat {
+        box-sizing: border-box;
+        display: flex;
+        width: 100%;
+        min-height: 54px;
+        margin: 0;
+        padding: 7px 8px;
+        align-items: center;
+        gap: 9px;
+        overflow: hidden;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        text-align: left;
+    }
+
+    .friend-sidebar-chat.is-active {
+        border-color: color-mix(in srgb, var(--friend-desktop-accent) 27%, var(--SmartThemeBorderColor));
+        background: color-mix(in srgb, var(--friend-desktop-accent) 11%, var(--SmartThemeChatTintColor));
+    }
+
+    .friend-sidebar-chat-visual {
+        display: grid;
+        width: 31px;
+        height: 31px;
+        flex: 0 0 31px;
+        overflow: hidden;
+        place-items: center;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--friend-desktop-accent) 15%, var(--SmartThemeChatTintColor));
+        color: var(--friend-desktop-accent);
+        font-size: 12px;
+    }
+
+    .friend-sidebar-chat-visual img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .friend-sidebar-chat-copy {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    .friend-sidebar-chat-copy strong,
+    .friend-sidebar-chat-copy small {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .friend-sidebar-chat-copy strong {
+        font-size: 12px;
+        font-weight: 650;
+    }
+
+    .friend-sidebar-chat-copy small {
+        font-size: 9px;
+        opacity: 0.48;
+    }
+
+    .friend-sidebar-loading,
+    .friend-sidebar-empty {
+        display: flex;
+        min-height: 80px;
+        padding: 12px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        color: var(--SmartThemeBodyColor);
+        font-size: 11px;
+        opacity: 0.42;
+        text-align: center;
+    }
+
+    .friend-sidebar-utilities {
+        display: grid;
+        margin-top: 8px;
+        padding-top: 9px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+        border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 42%, transparent);
+    }
+
+    .friend-sidebar-utility {
+        display: flex;
+        min-width: 0;
+        min-height: 48px;
+        margin: 0;
+        padding: 6px 3px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        font-size: 10px;
+    }
+
+    .friend-sidebar-utility i {
+        color: var(--SmartThemeEmColor);
+        font-size: 14px;
+        opacity: 0.78;
+    }
+
+    .friend-sidebar-footer {
+        display: flex;
+        padding: 10px 9px 2px;
+        flex-direction: column;
+        gap: 5px;
+        border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 45%, transparent);
+    }
+
+    #friend-sidebar-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11px;
+        font-weight: 650;
+    }
+
+    #friend-sidebar-status::before {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 50%;
+        background: #73cf88;
+        content: '';
+    }
+
+    #friend-sidebar-status[data-state="offline"]::before {
+        background: #df7a72;
+    }
+
+    #friend-sidebar-status[data-state="preview"]::before {
+        background: var(--friend-desktop-accent);
+    }
+
+    #friend-sidebar-status[data-state="generating"]::before {
+        background: var(--friend-desktop-accent);
+        animation: friend-mobile-pulse 1.15s ease-in-out infinite alternate;
+    }
+
+    #friend-desktop-contextbar {
+        box-sizing: border-box;
+        display: flex;
+        min-height: 60px;
+        padding: 8px 12px 8px 18px;
+        flex: 0 0 60px;
+        align-items: center;
+        gap: 18px;
+        border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 66%, transparent);
+        background: linear-gradient(90deg,
+                color-mix(in srgb, var(--friend-desktop-surface) 98%, transparent),
+                color-mix(in srgb, var(--friend-desktop-surface) 88%, transparent));
+        backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 1.5));
+        z-index: 35;
+    }
+
+    .friend-desktop-sidebar-toggle {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        margin: 0;
+        padding: 0;
+        flex: 0 0 38px;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        opacity: 0.68;
+    }
+
+    .friend-desktop-sidebar-toggle:hover {
+        border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 58%, transparent);
+        background: color-mix(in srgb, var(--SmartThemeBodyColor) 7%, transparent);
+        opacity: 1;
+    }
+
+    .friend-desktop-context {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+    #friend-desktop-title,
+    #friend-desktop-status {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    #friend-desktop-title {
+        color: var(--SmartThemeBodyColor);
+        font-size: 15px;
+        font-weight: 750;
+        letter-spacing: 0.015em;
+    }
+
+    #friend-desktop-status {
+        display: inline-flex;
+        width: fit-content;
+        max-width: 100%;
+        align-items: center;
+        gap: 7px;
+        color: var(--SmartThemeEmColor);
+        font-size: 12px;
+        opacity: 0.76;
+    }
+
+    #friend-desktop-status::before {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 999px;
+        background: #73cf88;
+        box-shadow: 0 0 0 3px color-mix(in srgb, #73cf88 18%, transparent);
+        content: '';
+    }
+
+    #friend-desktop-status[data-state="offline"]::before {
+        background: #df7a72;
+        box-shadow: 0 0 0 3px color-mix(in srgb, #df7a72 18%, transparent);
+    }
+
+    #friend-desktop-status[data-state="generating"]::before {
+        background: var(--friend-desktop-accent);
+        animation: friend-mobile-pulse 1.15s ease-in-out infinite alternate;
+    }
+
+    .friend-desktop-actions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 6px;
+    }
+
+    .friend-desktop-action {
+        display: inline-flex;
+        min-height: 38px;
+        margin: 0;
+        padding: 0 12px;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 70%, transparent);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--SmartThemeChatTintColor) 72%, transparent);
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 650;
+        text-shadow: inherit;
+        transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+    }
+
+    .friend-desktop-action:hover {
+        border-color: color-mix(in srgb, var(--friend-desktop-accent) 64%, var(--SmartThemeBorderColor));
+        background: color-mix(in srgb, var(--friend-desktop-accent) 13%, var(--SmartThemeChatTintColor));
+        transform: translateY(-1px);
+    }
+
+    .friend-desktop-action:focus-visible {
+        outline: 2px solid var(--friend-desktop-accent);
+        outline-offset: 2px;
+    }
+
+    .friend-desktop-action[data-friend-action="newChat"] {
+        border-color: color-mix(in srgb, var(--friend-desktop-accent) 58%, var(--SmartThemeBorderColor));
+        background: color-mix(in srgb, var(--friend-desktop-accent) 18%, var(--SmartThemeChatTintColor));
+    }
+
+    body.friend-desktop-ui #chat {
+        max-height: none;
+        padding: 12px 0 18px;
+        scroll-padding-block: 20px 110px;
+        overscroll-behavior-y: contain;
+        border: 0;
+    }
+
+    body.friend-desktop-ui #chat .mes {
+        box-sizing: border-box;
+        width: calc(100% - 40px);
+        max-width: 920px;
+        margin: 4px auto;
+        padding: 16px 18px 14px;
+        border: 1px solid transparent;
+        border-radius: 14px;
+    }
+
+    body.friend-desktop-ui #chat .mes[is_user="true"] {
+        border-color: color-mix(in srgb, var(--friend-desktop-accent) 20%, transparent);
+        background: color-mix(in srgb, var(--friend-desktop-accent) 7%, var(--SmartThemeChatTintColor));
+    }
+
+    body.friend-desktop-ui #chat .mes[is_user="false"]:not([is_system="true"]) {
+        background: color-mix(in srgb, var(--friend-desktop-surface) 42%, transparent);
+    }
+
+    body.friend-desktop-ui #chat .mes_text,
+    body.friend-desktop-ui #chat .mes_reasoning {
+        line-height: 1.72;
+    }
+
+    body.friend-desktop-ui #form_sheld {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 8px 20px 14px;
+        background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--friend-desktop-surface) 95%, transparent) 32%);
+    }
+
+    body.friend-desktop-ui #send_form {
+        box-sizing: border-box;
+        max-width: 920px;
+        margin-inline: auto;
+        padding: 5px;
+        border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 76%, var(--friend-desktop-accent) 24%);
+        border-radius: 16px;
+        background: color-mix(in srgb, var(--friend-desktop-surface) 94%, transparent);
+        box-shadow: 0 10px 32px var(--black50a), inset 0 1px 0 var(--white10a);
+    }
+
+    body.friend-desktop-ui #leftSendForm {
+        align-items: center;
+        gap: 2px;
+    }
+
+    body.friend-desktop-ui #options_button,
+    body.friend-desktop-ui #friend-attach-button {
+        box-sizing: border-box;
+        display: grid;
+        width: 38px;
+        height: 38px;
+        margin: 0;
+        padding: 0;
+        place-items: center;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--SmartThemeBodyColor);
+        font: inherit;
+        font-size: 15px;
+        opacity: 0.66;
+    }
+
+    body.friend-desktop-ui #options_button:hover,
+    body.friend-desktop-ui #friend-attach-button:hover {
+        background: color-mix(in srgb, var(--friend-desktop-accent) 13%, transparent);
+        opacity: 1;
+    }
+
+    body.friend-desktop-ui #send_textarea {
+        min-height: 54px;
+        height: 54px;
+        max-height: min(38dvh, 320px);
+        padding: 15px 10px 12px;
+        line-height: 1.5;
+        resize: vertical;
+    }
+
+    body.friend-desktop-ui #send_but,
+    body.friend-desktop-ui #mes_stop {
+        margin: 4px !important;
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--friend-desktop-accent) 82%, transparent);
+        color: #17120f;
+        opacity: 1;
+        text-shadow: none;
+    }
+
+    body.friend-desktop-ui #send_form.no-connection {
+        border-color: color-mix(in srgb, #df7a72 46%, var(--SmartThemeBorderColor));
+    }
+
+    @media screen and (max-width: 1240px) {
+        .friend-desktop-action {
+            padding-inline: 10px;
+        }
+
+        .friend-desktop-action span {
+            display: none;
+        }
+    }
+
+    @media screen and (max-width: 1000px) {
+        :root {
+            --friend-sidebar-width: 232px;
+        }
+
+        #friend-desktop-sidebar {
+            padding-inline: 9px;
+        }
+
+        .friend-sidebar-brand small,
+        .friend-sidebar-chat-copy small {
+            font-size: 9px;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        #friend-desktop-status[data-state="generating"]::before {
+            animation: none;
+        }
+    }
+}
+
+@media screen and (max-width: 820px) {
+    :root {
+        --friend-mobile-header-height: calc(58px + env(safe-area-inset-top, 0px));
+        --friend-mobile-surface: color-mix(in srgb, var(--SmartThemeBlurTintColor) 92%, #16120f 8%);
+        --friend-mobile-accent: color-mix(in srgb, var(--SmartThemeQuoteColor) 76%, #d6a45c 24%);
+        --topBarBlockSize: var(--friend-mobile-header-height);
+    }
+
+    body.friend-mobile-ui {
+        height: var(--friend-viewport-height, 100dvh);
+        overscroll-behavior: none;
+    }
+
+    body.friend-mobile-ui #top-bar {
+        height: var(--friend-mobile-header-height);
+        background: linear-gradient(180deg,
+                color-mix(in srgb, var(--friend-mobile-surface) 96%, white 4%),
+                var(--friend-mobile-surface));
+        border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 72%, transparent);
+        box-shadow: 0 8px 28px var(--black50a);
+        overflow: visible;
+    }
+
+    #friend-mobile-header {
+        box-sizing: border-box;
+        display: flex;
+        align-items: stretch;
+        width: 100%;
+        height: 100%;
+        padding: env(safe-area-inset-top, 0px) max(8px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+        color: var(--SmartThemeBodyColor);
+    }
+
+    .friend-mobile-context {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+        padding-right: 6px;
+    }
+
+    #friend-mobile-title,
+    #friend-mobile-subtitle {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    #friend-mobile-title {
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+    }
+
+    #friend-mobile-subtitle {
+        color: var(--SmartThemeEmColor);
+        font-size: 11px;
+        opacity: 0.72;
+    }
+
+    #friend-mobile-status {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        max-width: 100%;
+        gap: 5px;
+    }
+
+    #friend-mobile-status::before {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 6px;
+        border-radius: 999px;
+        background: #73cf88;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #73cf88 20%, transparent);
+        content: '';
+    }
+
+    #friend-mobile-status[data-state="offline"]::before {
+        background: #df7a72;
+        box-shadow: 0 0 0 2px color-mix(in srgb, #df7a72 20%, transparent);
+    }
+
+    #friend-mobile-status[data-state="generating"]::before {
+        background: var(--friend-mobile-accent);
+        animation: friend-mobile-pulse 1.15s ease-in-out infinite alternate;
+    }
+
+    .friend-mobile-actions {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: stretch;
+        gap: 1px;
+    }
+
+    .friend-mobile-action {
+        display: flex;
+        min-width: 45px;
+        min-height: 52px;
+        margin: 0;
+        padding: 5px 4px 4px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        line-height: 1;
+        text-shadow: inherit;
+        touch-action: manipulation;
+    }
+
+    .friend-mobile-action i {
+        color: var(--SmartThemeEmColor);
+        font-size: 16px;
+    }
+
+    .friend-mobile-action span {
+        font-size: 10px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+    }
+
+    .friend-mobile-action:active,
+    .friend-mobile-action[aria-expanded="true"] {
+        background: color-mix(in srgb, var(--friend-mobile-accent) 20%, transparent);
+    }
+
+    .friend-mobile-action:focus-visible {
+        outline: 2px solid var(--friend-mobile-accent);
+        outline-offset: -2px;
+    }
+
+    body.friend-mobile-ui #top-settings-holder {
+        box-sizing: border-box;
+        display: none;
+        position: fixed;
+        top: var(--friend-mobile-header-height);
+        left: 0;
+        z-index: 3004;
+        width: 100dvw;
+        height: auto;
+        max-height: min(54dvh, 430px);
+        padding: 10px max(10px, env(safe-area-inset-right, 0px)) 14px max(10px, env(safe-area-inset-left, 0px));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        overflow-y: auto;
+        border-bottom: 1px solid var(--SmartThemeBorderColor);
+        background: var(--friend-mobile-surface);
+        box-shadow: 0 18px 40px var(--black70a);
+        backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 2));
+    }
+
+    body.friend-mobile-tools-open #top-settings-holder {
+        display: grid;
+    }
+
+    body.friend-mobile-ui #top-settings-holder > .drawer {
+        display: block;
+        width: 100%;
+        min-width: 0;
+    }
+
+    body.friend-mobile-ui #top-settings-holder .drawer-toggle {
+        box-sizing: border-box;
+        display: flex;
+        width: 100%;
+        min-height: 58px;
+        padding: 7px 3px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        overflow: hidden;
+        border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 66%, transparent);
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--SmartThemeChatTintColor) 72%, transparent);
+        text-align: center;
+        touch-action: manipulation;
+    }
+
+    body.friend-mobile-ui #top-settings-holder .drawer-toggle::after {
+        width: 100%;
+        overflow: hidden;
+        color: var(--SmartThemeBodyColor);
+        content: attr(data-friend-label);
+        font-family: var(--mainFontFamily);
+        font-size: 10px;
+        line-height: 1.15;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    body.friend-mobile-ui #top-settings-holder .drawer-icon {
+        padding: 0;
+        font-size: 18px;
+        opacity: 0.82;
+    }
+
+    body.friend-mobile-ui #sheld {
+        box-sizing: border-box;
+        top: var(--friend-mobile-header-height);
+        height: calc(var(--friend-viewport-height, 100dvh) - var(--friend-mobile-header-height)) !important;
+        max-height: calc(var(--friend-viewport-height, 100dvh) - var(--friend-mobile-header-height)) !important;
+        background: color-mix(in srgb, var(--SmartThemeChatTintColor) 94%, transparent);
+    }
+
+    body.friend-mobile-ui #chat {
+        max-height: none;
+        padding: 4px 4px 14px;
+        scroll-padding-bottom: 108px;
+        overscroll-behavior-y: contain;
+        border: 0;
+    }
+
+    body.friend-mobile-ui #chat .mes {
+        padding: 12px 9px 10px;
+    }
+
+    body.friend-mobile-ui #chat .mes_text,
+    body.friend-mobile-ui #chat .mes_reasoning {
+        font-size: max(var(--mainFontSize), 16px);
+        line-height: 1.65;
+    }
+
+    body.friend-mobile-ui #form_sheld {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 7px max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+        background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--friend-mobile-surface) 94%, transparent) 22%);
+    }
+
+    body.friend-mobile-ui #send_form {
+        box-sizing: border-box;
+        padding: 5px;
+        border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 82%, var(--friend-mobile-accent) 18%);
+        border-radius: 17px;
+        background: color-mix(in srgb, var(--friend-mobile-surface) 93%, transparent);
+        box-shadow: 0 8px 24px var(--black50a), inset 0 1px 0 var(--white10a);
+    }
+
+    body.friend-mobile-ui #nonQRFormItems {
+        align-items: flex-end;
+        column-gap: 3px;
+    }
+
+    body.friend-mobile-ui #send_textarea {
+        box-sizing: border-box;
+        min-height: 52px;
+        height: 52px;
+        max-height: min(38dvh, 280px);
+        padding: 13px 7px 11px;
+        border-radius: 12px;
+        font-size: max(var(--mainFontSize), 16px);
+        line-height: 1.45;
+        resize: none;
+        text-align: left;
+        touch-action: manipulation;
+    }
+
+    body.friend-mobile-ui #send_textarea::placeholder {
+        text-align: left;
+    }
+
+    body.friend-mobile-ui #leftSendForm,
+    body.friend-mobile-ui #rightSendForm {
+        width: auto;
+        height: auto;
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    body.friend-mobile-ui #leftSendForm > div,
+    body.friend-mobile-ui #rightSendForm > div:not(.mes_stop) {
+        box-sizing: border-box;
+        width: 44px;
+        height: 52px;
+        border-radius: 12px;
+        opacity: 0.86;
+    }
+
+    body.friend-mobile-ui #options_button,
+    body.friend-mobile-ui #send_but {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        font-size: 18px;
+        touch-action: manipulation;
+    }
+
+    body.friend-mobile-ui #mes_stop {
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        font-size: 18px;
+        touch-action: manipulation;
+    }
+
+    body.friend-mobile-ui #options_button::after,
+    body.friend-mobile-ui #send_but::after,
+    body.friend-mobile-ui #mes_stop::after {
+        font-family: var(--mainFontFamily);
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    body.friend-mobile-ui #options_button::after {
+        content: '功能';
+    }
+
+    body.friend-mobile-ui #send_but,
+    body.friend-mobile-ui #mes_stop {
+        width: 54px !important;
+        height: 52px !important;
+        padding: 0 !important;
+        border-radius: 13px !important;
+        background: var(--friend-mobile-accent);
+        color: #17120f;
+        opacity: 1 !important;
+        text-shadow: none;
+    }
+
+    body.friend-mobile-ui #send_but::after {
+        content: '傳送';
+    }
+
+    body.friend-mobile-ui #mes_stop::after {
+        content: '停止';
+    }
+
+    body.friend-mobile-ui #send_form.no-connection {
+        border-color: color-mix(in srgb, #df7a72 55%, var(--SmartThemeBorderColor));
+    }
+
+    body.friend-mobile-ui #send_form.no-connection #send_textarea {
+        opacity: 0.78;
+    }
+
+    body.friend-mobile-ui.keyboard-open #chat {
+        scroll-padding-bottom: 84px;
+    }
+
+    @media screen and (max-width: 430px) {
+        .friend-mobile-context {
+            max-width: 112px;
+        }
+
+        .friend-mobile-action {
+            min-width: 43px;
+            padding-inline: 2px;
+        }
+
+        body.friend-mobile-ui #chat .mes {
+            padding-inline: 7px;
+        }
+    }
+
+    @media screen and (max-width: 370px) {
+        .friend-mobile-context {
+            max-width: 84px;
+        }
+
+        .friend-mobile-action {
+            min-width: 41px;
+        }
+
+        .friend-mobile-action span {
+            font-size: 9px;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        #friend-mobile-status[data-state="generating"]::before {
+            animation: none;
+        }
+    }
+}
+
+@keyframes friend-mobile-pulse {
+    from {
+        opacity: 0.45;
+        transform: scale(0.82);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1.08);
+    }
+}
