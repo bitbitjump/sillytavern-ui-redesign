@@ -201,7 +201,13 @@
             button.addEventListener('click', () => clickExistingControl(selectors[button.dataset.sidebarAction]));
         });
         sidebar.querySelectorAll('[data-friend-action="desktopTools"]').forEach((button) => button.addEventListener('click', toggleDesktopTools));
-        sidebar.querySelectorAll('[data-friend-sidebar-toggle]').forEach((button) => button.addEventListener('click', () => toggleDesktopSidebar()));
+        sidebar.querySelectorAll('[data-friend-sidebar-toggle]').forEach((button) => button.addEventListener('click', () => {
+            if (mobileQuery.matches) {
+                setMobileSidebar(false);
+                return;
+            }
+            toggleDesktopSidebar();
+        }));
         sidebar.querySelector('#friend-sidebar-search-input')?.addEventListener('input', renderRecentChats);
         document.body.prepend(sidebar);
 
