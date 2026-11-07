@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import { handleTavernApi } from './api.mjs';
+import { createConnector, validateConnectorConfig } from './connector.mjs';
+import { createLocalDb } from './sqlite.mjs';
+
+const site = 'https://tavern.example.test';
+const modelUrl = 'http://127.0.0.1:8787';
+const model = 'f451-writer';
+const token = crypto.randomUUID();
+const approver = '111111111111111111';
+const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
+const hex = buffer => Buffer.from(buffer).toString('hex');
+const db = createLocalDb();
+const notifications = [];
+const env = {
+    DB: db,
+    TAVERN_ALLOWED_EMAILS: 'alice@example.test,bob@example.test',
+    TAVERN_CONNECTOR_TOKEN: token,
+    DISCORD_APPROVER_ID: approver,
+    DISCORD_PUBLIC_KEY: hex(await crypto.subtle.exportKey('raw', keys.publicKey)),
+    DISCORD_BOT_TOKEN: 'mock',
+    DISCORD_FETCH: async (url, options) => {
+        if (url.endsWith('/users/@me/channels')) return Response.json({ id: '222222222222222222' });
+        notifications.push(JSON.parse(options.body));
+        return Response.json({ id: '333333333333333333' });
+    },
+};
+
+async function call(path, { user, body, headers = {}, origin = site } = {}) {
+    return handleTavernApi(new Request(site + path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/json',
+            ...(user && { 'oai-authenticated-user-id': user, 'oai-authenticated-user-email': `${user}@example.test` }),
+            ...headers },
+        body: body === undefined ? undefined : JSON.stringify(body),
+    }), env);
+}
+
+async function approve(customId, actor = approver) {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const body = { type: 3, user: { id: actor }, data: { custom_id: customId } };
+    const signed = await crypto.subtle.sign('Ed25519', keys.privateKey,
+        new TextEncoder().encode(timestamp + JSON.stringify(body)));
+    return call('/api/discord/interactions', { body, headers: {
+        'X-Signature-Ed25519': hex(signed), 'X-Signature-Timestamp': timestamp,
+    } });
+}
+
+let running = false;
+let sleeping = false;
+let starts = 0;
+let upstreamRequest;
+const config = validateConnectorConfig({ site, modelUrl, model, token, startScript: process.cwd() });
+const mac = createConnector(config, {
+    launch: async () => { starts++; running = true; },
+    pause: async () => {},
+    fetcher: async (url, options) => {
+        if (url.startsWith(site)) return handleTavernApi(new Request(url, options), env);
+        assert.ok(url.startsWith(modelUrl));
+        if (!running) throw new Error('stopped', { cause: { code: 'ECONNREFUSED' } });
+        if (url.endsWith('/health')) return Response.json({ status: 'ok' });
+        if (url.endsWith('/props')) return Response.json({ is_sleeping: sleeping });
+        if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: model }] });
+        assert.ok(url.endsWith('/v1/chat/completions'));
+        sleeping = false;
+        upstreamRequest = JSON.parse(options.body);
+        return Response.json({ choices: [{ message: { content: 'model answer' } }] });
+    },
+});
+
+try {
+    assert.equal((await call('/api/tavern/chats')).status, 401);
+    assert.equal((await call('/api/tavern/chats', { user: 'outsider' })).status, 403);
+    assert.equal((await call('/api/tavern/request', { user: 'alice', body: {}, origin: 'https://other.test' })).status, 403);
+    assert.equal((await call('/api/connector/poll', { body: { state: 'ready' } })).status, 403);
+    const alice = { user: 'alice' };
+    const bob = { user: 'bob' };
+    const chat = await (await call('/api/tavern/chats', { ...alice, body: {} })).json();
+    const chatPath = `/api/tavern/chats/${chat.id}`;
+    assert.equal((await call(chatPath, { ...alice, body: { text: 'before approval' } })).status, 409);
+    assert.equal((await call(chatPath, bob)).status, 404);
+    assert.equal((await call(chatPath, { ...bob, body: { text: 'try other account' } })).status, 404);
+
+    await mac.step();
+    assert.equal(starts, 0);
+    const approvedRequest = await call('/api/tavern/request', { ...alice, body: {} });
+    assert.equal(approvedRequest.status, 201);
+    const { approval } = await approvedRequest.json();
+    assert.equal(approval.state, 'pending');
+    assert.equal((await call('/api/tavern/request', { ...alice, body: {} })).status, 200);
+    assert.equal(notifications.length, 1);
+    await mac.step();
+    assert.equal(starts, 0);
+    const customId = notifications[0].components[0].components[0].custom_id;
+    assert.equal((await call('/api/discord/interactions', { body: { type: 3 } })).status, 401);
+    assert.equal((await (await approve(customId, '555555555555555555')).json()).type, 4);
+    await mac.step();
+    assert.equal(starts, 0);
+    assert.equal((await (await approve(customId)).json()).type, 7);
+    await approve(customId);
+    await mac.step();
+    assert.equal(starts, 1);
+    const status = await (await call('/api/tavern/status', alice)).json();
+    assert.equal(status.approval.state, 'ready');
+
+    const nearExpiry = Date.now() + 2_000;
+    db.prepare('UPDATE approvals SET expires=? WHERE id=?').bind(nearExpiry, approval.id).run();
+    const result = await call(chatPath, { ...alice, body: { text: 'Alice private test', generation: { style: 'witty', temperature: 0.8 } } });
+    assert.equal(result.status, 202);
+    const { job } = await result.json();
+    const queued = await db.prepare('SELECT expires FROM jobs WHERE id=?').bind(job).first();
+    assert.ok(queued.expires > nearExpiry);
+    assert.ok((await (await call('/api/tavern/status', alice)).json()).approval.expires > nearExpiry);
+    assert.equal((await call(chatPath, { ...alice, body: { text: 'concurrent' } })).status, 409);
+    sleeping = true;
+    await mac.step();
+    assert.equal(starts, 1);
+    assert.equal(upstreamRequest.model, model);
+    assert.equal(upstreamRequest.temperature, 0.8);
+    assert.equal(upstreamRequest.messages[0].role, 'system');
+    const saved = await (await call(chatPath, alice)).json();
+    assert.deepEqual(saved.messages.map(message => message.content), ['Alice private test', 'model answer']);
+    assert.equal(saved.job.state, 'done');
+    assert.deepEqual(await (await call('/api/tavern/chats', bob)).json(), { chats: [] });
+    assert.equal((await call(chatPath, bob)).status, 404);
+    assert.equal((await (await call('/api/tavern/status', bob)).json()).approval, null);
+
+    db.prepare('UPDATE approvals SET expires=0 WHERE id=?').bind(approval.id).run();
+    assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'expired');
+    assert.equal((await call(chatPath, { ...alice, body: { text: 'after timeout' } })).status, 409);
+    console.log('通過：私人聊天室隔離、簽章和批准者驗證、避免重複私訊與啟動、閒置重載、聊天參數、過期重新申請。');
+} finally {
+    db.close();
+}

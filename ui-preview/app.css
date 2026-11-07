@@ -179,6 +179,12 @@
   cursor: pointer;
 }
 .generation-actions button[type="submit"] { background: var(--accent); color: var(--ink); }
+.hosted-account {
+  color: var(--accent2);
+  text-decoration: none;
+  font-size: 12px;
+  white-space: nowrap;
+}
 @media (max-width: 940px) {
   .sidebar-open .sidebar { pointer-events: auto; }
 }

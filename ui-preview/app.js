@@ -25,6 +25,8 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   let localModel;
   let generating = false;
   let activeChat;
+  const hosted = document.body.hasAttribute('data-hosted');
+  let hostedUi;
   const settingsKey = 'tavern-generation-settings';
   let generation = { style: 'default' };
 
@@ -90,7 +92,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       }
       try {
         localStorage.setItem(settingsKey, JSON.stringify(generation));
-        panelStatus.textContent = localModel?.mode === 'remote'
+        panelStatus.textContent = localModel?.mode === 'remote' || hostedUi
           ? '已儲存。下次送出或重新回覆時套用。'
           : '已儲存。連接模型後才會套用到回覆。';
       } catch {
@@ -264,6 +266,8 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     panelTitle.textContent = data[1];
     if (kind === 'generation') {
       renderGenerationSettings();
+    } else if (kind === 'models' && hostedUi) {
+      hostedUi.modelPanel();
     } else if (kind === 'models' && localModel) {
       panelContent.innerHTML = `
         <p class="panel-note"><strong id="configured-model"></strong><br>
@@ -408,6 +412,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     if (isNarrow()) closeFloatingSidebar(); showToast(`已切換到「${row.dataset.title}」`);
   });
   $('#new-chat').onclick = () => {
+    if (hosted) return hostedUi?.newChat();
     if (generating) return;
     if (localModel) {
       startLocalChat();
@@ -424,6 +429,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     event.preventDefault();
     const text = input.value.trim();
     if (!text || generating) return;
+    if (hosted) return hostedUi?.sendMessage(text);
     if (localModel) {
       const context = chatContext();
       const pending = addMessage(text, 'user');
@@ -460,5 +466,13 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     if (toolPicker.matches(':popover-open')) positionToolPicker();
   });
   loadGenerationSettings();
-  initLocalModel();
+  if (hosted) {
+    import('./hosted/ui.mjs').then(({ createHostedUi }) => {
+      hostedUi = createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
+        closeFloatingSidebar, isNarrow, getGeneration: () => generation });
+      return hostedUi.init();
+    }).catch(() => { chatStatus.textContent = '網站聊天模組無法載入。'; });
+  } else {
+    initLocalModel();
+  }
 })();

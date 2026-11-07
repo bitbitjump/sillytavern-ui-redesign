@@ -1,0 +1,8 @@
+{
+  "site": "https://tavern-ui-lab.jericawu1001.chatgpt.site",
+  "token": "",
+  "model": "f451-writer",
+  "modelUrl": "http://127.0.0.1:8787",
+  "startScript": "",
+  "modelFile": ""
+}

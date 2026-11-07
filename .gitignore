@@ -55,6 +55,8 @@ public/scripts/extensions/third-party
 /certs
 .aider*
 .env
+/ui-preview/hosted/connector.local.json
+/ui-preview/hosted/*.sqlite*
 /StartDev.bat
 yarn.lock
 *.code-workspace
