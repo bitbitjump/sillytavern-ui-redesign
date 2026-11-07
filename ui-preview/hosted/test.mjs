@@ -99,9 +99,10 @@ try {
     assert.equal((await call(chatPath, bob)).status, 404);
     assert.equal((await call(chatPath, { ...bob, body: { text: 'try other account' } })).status, 404);
     const settingsPath = `${chatPath}/settings`;
-    const contextA = { world: '雨夜書店', instructions: '用書信形式回答' };
-    const contextB = { world: '木星空間站', instructions: '用任務簡報回答' };
+    const contextA = { world: '雨夜書店', instructions: '用書信形式回答', systemPrompt: '扮演書店管理員' };
+    const contextB = { world: '木星空間站', instructions: '用任務簡報回答', systemPrompt: '扮演值班導航員' };
     assert.equal((await call(settingsPath, { ...alice, body: { context: { world: [] } } })).status, 400);
+    assert.equal((await call(settingsPath, { ...alice, body: { context: { systemPrompt: 'x'.repeat(4001) } } })).status, 400);
     assert.equal((await call(settingsPath, { ...alice, body: { context: contextA }, origin: 'https://other.test' })).status, 403);
     assert.equal((await call(settingsPath, bob)).status, 404);
     assert.equal((await call(settingsPath, { ...bob, body: { context: contextB } })).status, 404);
@@ -110,6 +111,7 @@ try {
     assert.deepEqual((await (await call(`/api/tavern/chats/${oldRoom}`, alice)).json()).settings, {});
     const firstGeneration = { style: 'witty', temperature: 0.8 };
     await call(settingsPath, { ...alice, body: { context: contextA } });
+    await call(settingsPath, { ...alice, body: { context: { world: contextA.world, instructions: contextA.instructions } } });
     await call(settingsPath, { ...alice, body: { generation: firstGeneration } });
     const second = await (await call('/api/tavern/chats', { ...alice, body: {
         settings: { context: contextB, generation: { style: 'concise', temperature: 0.2 } },
@@ -155,12 +157,14 @@ try {
     assert.equal(upstreamRequest.model, model);
     assert.equal(upstreamRequest.temperature, 0.8);
     assert.equal(upstreamRequest.messages[0].role, 'system');
+    assert.ok(upstreamRequest.messages[0].content.startsWith(contextA.systemPrompt));
     assert.match(upstreamRequest.messages[0].content, /雨夜書店[\s\S]*用書信形式回答/);
-    assert.doesNotMatch(JSON.stringify(upstreamRequest.messages), /木星空間站|另一間聊天室/);
+    assert.doesNotMatch(JSON.stringify(upstreamRequest.messages), /值班導航員|木星空間站|另一間聊天室/);
     await mac.step();
     assert.equal(upstreamRequest.temperature, 0.2);
+    assert.ok(upstreamRequest.messages[0].content.startsWith(contextB.systemPrompt));
     assert.match(upstreamRequest.messages[0].content, /木星空間站[\s\S]*用任務簡報回答/);
-    assert.doesNotMatch(JSON.stringify(upstreamRequest.messages), /雨夜書店|Alice private test/);
+    assert.doesNotMatch(JSON.stringify(upstreamRequest.messages), /書店管理員|雨夜書店|Alice private test/);
     assert.deepEqual((await (await call(secondPath, alice)).json()).messages.map(message => message.content),
         ['另一間聊天室', 'model answer']);
     const saved = await (await call(chatPath, alice)).json();

@@ -66,16 +66,22 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
           <span>對話需求</span>
           <textarea name="instructions" rows="4" maxlength="${chatContextLimit}" placeholder="想完成的事、回覆方式、希望避免的內容"></textarea>
         </label>
+        <label class="generation-field">
+          <span>系統提示詞</span>
+          <textarea name="systemPrompt" rows="5" maxlength="${chatContextLimit}" placeholder="例如：你是劇情編輯。保留人物原有個性，先指出矛盾，再提供兩種改法。"></textarea>
+          <small>每次回覆前提供給模型的指令，可以留白。</small>
+        </label>
         <div class="generation-actions"><button type="submit">儲存設定</button></div>
       </form>${panelData.settings[2]}`;
     const form = $('#chat-settings-form');
-    const { world = '', instructions = '' } = roomSettings().context || {};
+    const { world = '', instructions = '', systemPrompt = '' } = roomSettings().context || {};
     form.elements.namedItem('world').value = world;
     form.elements.namedItem('instructions').value = instructions;
+    form.elements.namedItem('systemPrompt').value = systemPrompt;
     form.onsubmit = event => {
       event.preventDefault();
       return saveRoomSettings(form, fields => ({
-        context: validateChatContext({ world: fields.get('world'), instructions: fields.get('instructions') }),
+        context: validateChatContext(Object.fromEntries(fields)),
       }));
     };
   }
@@ -540,6 +546,8 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
 
   function openPanel(kind) {
     if (panel.open) return;
+    const focusPrompt = kind === 'prompt';
+    if (focusPrompt) kind = 'settings';
     const data = panelData[kind];
     if (!data) return;
     closeToolPicker();
@@ -586,6 +594,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     pointerStartedOnBackdrop = false;
     panel.showModal();
     panelContent.scrollTop = 0;
+    if (focusPrompt) $('textarea[name="systemPrompt"]', panelContent).focus();
   }
   function closePanel() { panel.close(); }
   panel.addEventListener('close', () => {

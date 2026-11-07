@@ -218,7 +218,7 @@ function validateRoomSettings(patch, previous = {}) {
     }
     try {
         const settings = { ...previous };
-        if (Object.hasOwn(patch, 'context')) settings.context = validateChatContext(patch.context);
+        if (Object.hasOwn(patch, 'context')) settings.context = validateChatContext(patch.context, previous.context);
         if (Object.hasOwn(patch, 'generation')) {
             const { style, parameters } = validateGenerationSettings(patch.generation);
             settings.generation = { style, ...parameters };
