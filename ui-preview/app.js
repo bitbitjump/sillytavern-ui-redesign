@@ -15,6 +15,7 @@
   const isNarrow = () => matchMedia('(max-width: 940px)').matches;
   const versions = new WeakMap();
   let toastTimer;
+  let pointerStartedOnBackdrop = false;
 
   const panelData = {
     roles: ['角色與人格', '選擇角色', `
@@ -68,10 +69,29 @@
     panelTitle.textContent = data[1];
     panelContent.innerHTML = data[2];
     panelStatus.textContent = '';
+    pointerStartedOnBackdrop = false;
     panel.showModal();
     panelContent.scrollTop = 0;
   }
   function closePanel() { panel.close(); }
+  function isBackdropPointer(event) {
+    if (event.target !== panel) return false;
+    const bounds = panel.getBoundingClientRect();
+    return event.clientX < bounds.left || event.clientX > bounds.right
+      || event.clientY < bounds.top || event.clientY > bounds.bottom;
+  }
+
+  panel.addEventListener('pointerdown', event => {
+    pointerStartedOnBackdrop = event.button === 0 && isBackdropPointer(event);
+  });
+  panel.addEventListener('pointercancel', () => {
+    pointerStartedOnBackdrop = false;
+  });
+  panel.addEventListener('click', event => {
+    const shouldClose = pointerStartedOnBackdrop && isBackdropPointer(event);
+    pointerStartedOnBackdrop = false;
+    if (shouldClose) closePanel();
+  });
   function closeFloatingSidebar() { shell.classList.remove('sidebar-open'); }
   function resizeInput() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`; }
   function escapeHtml(value) { const el = document.createElement('div'); el.textContent = value; return el.innerHTML; }

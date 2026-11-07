@@ -8,7 +8,7 @@
     <link href="../public/webfonts/NotoSans/stylesheet.css" rel="stylesheet">
     <link href="../public/css/fontawesome.min.css" rel="stylesheet">
     <link href="../public/css/solid.min.css" rel="stylesheet">
-    <link href="app.css?v=8" rel="stylesheet">
+    <link href="app.css?v=9" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell" id="app-shell">
@@ -21,8 +21,8 @@
                 <button class="icon-button sidebar__collapse" id="sidebar-close" type="button" title="收起側欄" aria-label="收起側欄"><i class="fa-solid fa-angles-left"></i></button>
             </div>
             <div class="sidebar__primary">
-                <button class="new-chat" id="new-chat" type="button"><i class="fa-solid fa-pen-to-square"></i><span>開始新聊天</span><kbd>Ctrl K</kbd></button>
-                <label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input id="chat-search" type="search" placeholder="搜尋聊天" autocomplete="off"></label>
+                <label class="search-box"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="chat-search" type="search" placeholder="搜尋聊天" aria-label="搜尋聊天" autocomplete="off"></label>
+                <button class="new-chat" id="new-chat" type="button" aria-label="新增聊天" title="新增聊天 (Ctrl K)"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
             </div>
             <nav class="chat-history" id="chat-history" aria-label="聊天記錄">
                 <section class="chat-group" data-group="今天">
@@ -100,6 +100,6 @@
         </dialog>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=9"></script>
 </body>
 </html>
