@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { replyStyles, validateGenerationSettings } from './generation-settings.mjs';
+import { chatSystemMessage, validateGenerationSettings } from './generation-settings.mjs';
 
 const host = '127.0.0.1';
 const port = Number(process.env.TAVERN_PORT || 8120);
@@ -111,13 +111,14 @@ async function readChatRequest(request) {
     throw new ApiError(400, '對話格式錯誤或超過 100 則訊息。');
   }
   let settings;
+  let instruction;
   try {
     settings = validateGenerationSettings(body.generation);
+    instruction = chatSystemMessage(settings.style, body.context);
   } catch (error) {
     throw new ApiError(400, error.message);
   }
   const messages = body.messages.map(({ role, content }) => ({ role, content }));
-  const instruction = replyStyles[settings.style].instruction;
   if (instruction) messages.unshift({ role: 'system', content: instruction });
   return { messages, parameters: settings.parameters };
 }

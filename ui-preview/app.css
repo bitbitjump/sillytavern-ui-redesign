@@ -146,6 +146,8 @@
 .chat-status:empty { display: none; }
 .chat-row[hidden], .message-actions[hidden], .version-switch[hidden] { display: none; }
 .generation-form { display: grid; gap: 16px; }
+.room-settings-note { margin: 0; color: var(--muted2); font-size: 12px; }
+#chat-settings-form { margin-bottom: 26px; }
 .generation-form fieldset {
   min-width: 0;
   margin: 0;
@@ -161,7 +163,7 @@
 }
 .generation-form fieldset .generation-field { margin-top: 12px; }
 .generation-field { display: grid; gap: 5px; font-size: 14px; }
-.generation-field input, .generation-field select {
+.generation-field input, .generation-field select, .generation-field textarea {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--line);
@@ -170,6 +172,7 @@
   color: var(--text);
   font: inherit;
 }
+.generation-field textarea { width: 100%; resize: vertical; }
 .generation-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .generation-actions button {
   padding: 8px 12px;

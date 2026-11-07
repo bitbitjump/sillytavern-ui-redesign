@@ -32,3 +32,25 @@ export function validateGenerationSettings(settings = {}) {
   }
   return { style, parameters };
 }
+
+export const chatContextLimit = 4000;
+
+export function validateChatContext(context = {}) {
+  if (!context || typeof context !== 'object' || Array.isArray(context)) {
+    throw new Error('聊天室設定格式錯誤。');
+  }
+  const { world = '', instructions = '' } = context;
+  if ([world, instructions].some(value => typeof value !== 'string' || value.length > chatContextLimit)) {
+    throw new Error(`世界觀和對話需求各限 ${chatContextLimit} 字元。`);
+  }
+  return { world: world.trim(), instructions: instructions.trim() };
+}
+
+export function chatSystemMessage(style, context = {}) {
+  const { world, instructions } = validateChatContext(context);
+  const parts = [];
+  if (world) parts.push(`世界觀\n${world}`);
+  if (instructions) parts.push(`對話需求\n${instructions}`);
+  if (replyStyles[style].instruction) parts.push(replyStyles[style].instruction);
+  return parts.join('\n\n');
+}

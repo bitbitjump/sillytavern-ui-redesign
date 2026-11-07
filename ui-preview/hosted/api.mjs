@@ -1,4 +1,4 @@
-import { replyStyles, validateGenerationSettings } from '../generation-settings.mjs';
+import { chatSystemMessage, validateChatContext, validateGenerationSettings } from '../generation-settings.mjs';
 
 const minute = 60_000;
 const approvalWindow = 15 * minute;
@@ -212,6 +212,23 @@ async function requestAccess(env, owner, now) {
     return json({ approval: { id, state: 'pending', expires: now + approvalWindow } }, 201);
 }
 
+function validateRoomSettings(patch, previous = {}) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw new HttpError(400, '聊天室設定格式錯誤。');
+    }
+    try {
+        const settings = { ...previous };
+        if (Object.hasOwn(patch, 'context')) settings.context = validateChatContext(patch.context);
+        if (Object.hasOwn(patch, 'generation')) {
+            const { style, parameters } = validateGenerationSettings(patch.generation);
+            settings.generation = { style, ...parameters };
+        }
+        return settings;
+    } catch (error) {
+        throw new HttpError(400, error.message);
+    }
+}
+
 async function chatRoute(request, env, path, owner, now) {
     const db = env.DB;
     if (path === '/api/tavern/chats') {
@@ -219,14 +236,30 @@ async function chatRoute(request, env, path, owner, now) {
             const { results } = await db.prepare('SELECT id,title FROM chats WHERE owner=? ORDER BY updated DESC LIMIT 200').bind(owner).all();
             return json({ chats: results });
         }
+        const body = request.body ? await readJson(request) : {};
+        const settings = validateRoomSettings(body.settings ?? {});
         const id = crypto.randomUUID();
-        await db.prepare('INSERT INTO chats (id,owner,title,updated) VALUES (?,?,?,?)').bind(id, owner, '新聊天', now).run();
-        return json({ id, title: '新聊天', messages: [] }, 201);
+        await db.batch([
+            db.prepare('INSERT INTO chats (id,owner,title,updated) VALUES (?,?,?,?)').bind(id, owner, '新聊天', now),
+            db.prepare('INSERT INTO chat_settings (chat_id,settings) VALUES (?,?)').bind(id, JSON.stringify(settings)),
+        ]);
+        return json({ id, title: '新聊天', messages: [], settings }, 201);
     }
-    const id = path.split('/').at(-1);
+    const [, , , , id, section] = path.split('/');
     if (!idPattern.test(id)) throw new HttpError(404, '找不到聊天室。');
-    const chat = await db.prepare('SELECT id,title,messages FROM chats WHERE id=? AND owner=?').bind(id, owner).first();
+    const chat = await db.prepare(`SELECT c.id,c.title,c.messages,COALESCE(s.settings,'{}') AS settings
+        FROM chats c LEFT JOIN chat_settings s ON c.id=s.chat_id WHERE c.id=? AND c.owner=?`).bind(id, owner).first();
     if (!chat) throw new HttpError(404, '找不到聊天室。');
+    const roomSettings = JSON.parse(chat.settings);
+    if (section === 'settings') {
+        if (request.method === 'GET') return json({ settings: roomSettings });
+        const settings = validateRoomSettings(await readJson(request), roomSettings);
+        const saved = await db.prepare(`INSERT INTO chat_settings (chat_id,settings) VALUES (?,?)
+            ON CONFLICT(chat_id) DO UPDATE SET settings=excluded.settings WHERE chat_settings.settings=?`)
+            .bind(id, JSON.stringify(settings), chat.settings).run();
+        if (!saved.meta.changes) throw new HttpError(409, '聊天室設定已更新，請重新開啟聊天室後再試。');
+        return json({ settings });
+    }
     const messages = JSON.parse(chat.messages);
     if (request.method === 'GET') {
         const job = await db.prepare(`SELECT id,state,error,expires FROM jobs WHERE chat_id=? AND owner=? ORDER BY created DESC LIMIT 1`).bind(id, owner).first();
@@ -234,7 +267,7 @@ async function chatRoute(request, env, path, owner, now) {
             job.state = 'failed';
             job.error = '等待模型逾時，請重新送出。';
         }
-        return json({ ...chat, messages, job });
+        return json({ ...chat, messages, settings: roomSettings, job });
     }
     const body = await readJson(request);
     if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 8000) {
@@ -245,7 +278,7 @@ async function chatRoute(request, env, path, owner, now) {
     if (approval?.state !== 'ready') throw new HttpError(409, '請先在模型選單送出使用請求。');
     let settings;
     try {
-        settings = validateGenerationSettings(body.generation);
+        settings = validateGenerationSettings(roomSettings.generation ?? body.generation);
     } catch (error) {
         throw new HttpError(400, error.message);
     }
@@ -255,7 +288,7 @@ async function chatRoute(request, env, path, owner, now) {
         throw new HttpError(409, '這個聊天室已達容量上限，請新增聊天。');
     }
     const title = messages.length ? chat.title : body.text.trim().slice(0, 28);
-    const system = replyStyles[settings.style].instruction;
+    const system = chatSystemMessage(settings.style, roomSettings.context);
     const prompt = history.slice(-12);
     if (system) prompt.unshift({ role: 'system', content: system });
     const job = crypto.randomUUID();
@@ -294,7 +327,7 @@ export async function handleTavernApi(request, env) {
                 approval: await latestApproval(env.DB, owner, now) });
         }
         if (request.method === 'POST' && path === '/api/tavern/request') return await requestAccess(env, owner, now);
-        if (['GET', 'POST'].includes(request.method) && /^\/api\/tavern\/chats(?:\/[^/]+)?$/.test(path)) {
+        if (['GET', 'POST'].includes(request.method) && /^\/api\/tavern\/chats(?:\/[^/]+(?:\/settings)?)?$/.test(path)) {
             return await chatRoute(request, env, path, owner, now);
         }
         throw new HttpError(404, '找不到端點。');

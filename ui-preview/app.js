@@ -1,4 +1,4 @@
-import { generationParameters, replyStyles, validateGenerationSettings } from './generation-settings.mjs';
+import { chatContextLimit, generationParameters, replyStyles, validateChatContext, validateGenerationSettings } from './generation-settings.mjs';
 
 (() => {
   'use strict';
@@ -30,17 +30,50 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   const hosted = document.body.hasAttribute('data-hosted');
   let hostedUi;
   let accountEmail;
-  const settingsKey = 'tavern-generation-settings';
-  let generation = { style: 'default' };
+  function roomSettings() {
+    return (hosted ? hostedUi?.getSettings() : activeChat?.settings) || {};
+  }
 
-  function loadGenerationSettings() {
+  async function saveRoomSettings(form, readSettings) {
+    const submit = $('button[type="submit"]', form);
+    submit.disabled = true;
+    panelStatus.textContent = '';
     try {
-      const saved = JSON.parse(localStorage.getItem(settingsKey) || '{}');
-      const { style, parameters } = validateGenerationSettings(saved);
-      generation = { style, ...parameters };
-    } catch {
-      // Invalid or unavailable browser storage leaves the defaults in place.
+      const patch = readSettings(new FormData(form));
+      if (hosted) await hostedUi.saveSettings(patch);
+      else Object.assign(activeChat.settings, patch);
+      if (form.isConnected && panel.open) panelStatus.textContent = '已儲存到這個聊天室，下一則回覆會套用。';
+    } catch (error) {
+      if (form.isConnected && panel.open) panelStatus.textContent = error.message;
+    } finally {
+      submit.disabled = false;
     }
+  }
+
+  function renderChatSettings() {
+    panelContent.innerHTML = `
+      <form class="generation-form" id="chat-settings-form">
+        <p class="room-settings-note">設定只套用到這個聊天室。</p>
+        <label class="generation-field">
+          <span>世界觀</span>
+          <textarea name="world" rows="4" maxlength="${chatContextLimit}" placeholder="故事背景、角色關係、世界規則"></textarea>
+        </label>
+        <label class="generation-field">
+          <span>對話需求</span>
+          <textarea name="instructions" rows="4" maxlength="${chatContextLimit}" placeholder="想完成的事、回覆方式、希望避免的內容"></textarea>
+        </label>
+        <div class="generation-actions"><button type="submit">儲存設定</button></div>
+      </form>${panelData.settings[2]}`;
+    const form = $('#chat-settings-form');
+    const { world = '', instructions = '' } = roomSettings().context || {};
+    form.elements.namedItem('world').value = world;
+    form.elements.namedItem('instructions').value = instructions;
+    form.onsubmit = event => {
+      event.preventDefault();
+      return saveRoomSettings(form, fields => ({
+        context: validateChatContext({ world: fields.get('world'), instructions: fields.get('instructions') }),
+      }));
+    };
   }
 
   function renderGenerationSettings() {
@@ -54,6 +87,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       </label>`).join('');
     panelContent.innerHTML = `
       <form class="generation-form">
+        <p class="room-settings-note">設定只套用到這個聊天室。</p>
         <label class="generation-field">
           <span>回覆語氣</span>
           <select name="style">${options}</select>
@@ -70,7 +104,8 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
         </div>
       </form>`;
     const form = $('.generation-form');
-    form.elements.namedItem('style').value = generation.style;
+    const generation = roomSettings().generation || {};
+    form.elements.namedItem('style').value = generation.style || 'default';
     for (const { key } of generationParameters) {
       form.elements.namedItem(key).value = generation[key] ?? '';
     }
@@ -80,27 +115,15 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     };
     form.onsubmit = event => {
       event.preventDefault();
-      const fields = new FormData(form);
-      const values = { style: fields.get('style') };
-      for (const { key } of generationParameters) {
-        const value = fields.get(key);
-        if (value !== '') values[key] = Number(value);
-      }
-      try {
+      return saveRoomSettings(form, fields => {
+        const values = { style: fields.get('style') };
+        for (const { key } of generationParameters) {
+          const value = fields.get(key);
+          if (value !== '') values[key] = Number(value);
+        }
         const { style, parameters } = validateGenerationSettings(values);
-        generation = { style, ...parameters };
-      } catch (error) {
-        panelStatus.textContent = error.message;
-        return;
-      }
-      try {
-        localStorage.setItem(settingsKey, JSON.stringify(generation));
-        panelStatus.textContent = localModel?.mode === 'remote' || hostedUi
-          ? '已儲存。下次送出或重新回覆時套用。'
-          : '已儲存。連接模型後才會套用到回覆。';
-      } catch {
-        panelStatus.textContent = '這次開啟期間會套用。瀏覽器無法保存設定。';
-      }
+        return { generation: { style, ...parameters } };
+      });
     };
   }
 
@@ -122,7 +145,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     row.className = 'chat-row';
     row.dataset.title = '新聊天';
     row.innerHTML = '<i class="fa-solid fa-comments" aria-hidden="true"></i><span>新聊天</span>';
-    const chat = { row, messages: [], draft: '' };
+    const chat = { row, messages: [], draft: '', settings: {} };
     row.addEventListener('click', () => {
       if (generating) return;
       switchLocalChat(chat);
@@ -166,6 +189,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     input.placeholder = '輸入訊息';
     $$('.message', conversation).forEach(message => message.remove());
     $('#chat-history').innerHTML = '<section class="chat-group"><h2>這次開啟的聊天</h2></section>';
+    activeChat = undefined;
     startLocalChat();
   }
 
@@ -188,7 +212,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     sendButton.disabled = true;
     chatStatus.textContent = '正在等待模型回覆…';
     try {
-      const result = await modelApi('/chat', { messages, generation });
+      const result = await modelApi('/chat', { messages, ...roomSettings() });
       onReply(result.content);
       chatStatus.textContent = '';
       return true;
@@ -216,7 +240,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
         <button class="panel-card is-selected" type="button" data-select-model="Tavern Story 7B"><span class="panel-card__icon"><i class="fa-solid fa-cube"></i></span><span><strong>Tavern Story 7B</strong><small>展示資料 · 尚未連接實際模型</small></span><i class="fa-solid fa-check"></i></button>
         <button class="panel-card" type="button" data-select-model="新增模型連線"><span class="panel-card__icon"><i class="fa-solid fa-plug"></i></span><span><strong>新增模型連線</strong><small>OpenAI 相容 API、Ollama 或自訂端點</small></span><i class="fa-solid fa-chevron-right"></i></button>
       </div></section><p class="panel-note">這個公開展示站不保存 API 金鑰。實際串接會放在本機／伺服器端設定，避免把私人連線資訊送到前端。</p>`],
-    generation: ['回覆設定', '語氣與生成參數'],
+    generation: ['這個聊天', '語氣與生成參數'],
     account: ['個人', '帳號設定', '<div class="toggle-row account-profile"><span>登入帳號</span><strong id="account-profile-email"></strong></div>'],
     settings: ['這個聊天', '聊天設定', `
       <section class="panel-section"><h3>回覆偏好</h3>
@@ -290,9 +314,12 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     closeToolPicker();
     closeAccountMenu();
     panelEyebrow.textContent = data[0];
+    if (kind === 'settings' || kind === 'generation') panelEyebrow.textContent = $('#chat-title').textContent;
     panelTitle.textContent = data[1];
     if (kind === 'generation') {
       renderGenerationSettings();
+    } else if (kind === 'settings') {
+      renderChatSettings();
     } else if (kind === 'models' && hostedUi) {
       hostedUi.modelPanel();
     } else if (kind === 'models' && localModel) {
@@ -393,7 +420,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     $('.version-content', article).innerHTML = list[index]; const switcher = $('.version-switch', article); switcher.hidden = list.length < 2;
     $('.version-label', switcher).textContent = `${index + 1} / ${list.length}`; $('[data-version-nav="prev"]', switcher).disabled = index === 0; $('[data-version-nav="next"]', switcher).disabled = index === list.length - 1;
   }
-  function addMessage(text, who) {
+  function addMessage(text, who, targetChat = activeChat) {
     const article = document.createElement('article'); article.className = `message message--${who}`;
     article.innerHTML = who === 'user'
       ? `<div class="message__body"><p>${escapeHtml(text).replace(/\n/g, '<br>')}</p></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button><button type="button" data-action="edit"><i class="fa-solid fa-pen"></i><span>編輯</span></button></div>`
@@ -411,7 +438,13 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
           <button type="button" data-version-nav="next" aria-label="下一個版本">›</button>
         </div>`);
     }
-    conversation.appendChild(article); conversation.scrollTop = conversation.scrollHeight; return article;
+    if (targetChat && targetChat !== activeChat) {
+      targetChat.messages.push(article);
+    } else {
+      conversation.appendChild(article);
+      conversation.scrollTop = conversation.scrollHeight;
+    }
+    return article;
   }
 
   $('#sidebar-open').onclick = openSidebar; $('#sidebar-close').onclick = closeSidebar; $('#panel-close').onclick = closePanel; $('#scrim').onclick = closeFloatingSidebar;
@@ -439,20 +472,21 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     }
     const toggle = event.target.closest('.switch'); if (toggle) toggle.classList.toggle('is-on');
   });
-  $$('.chat-row').forEach(row => row.onclick = event => {
-    if (event.target.closest('.row-more')) { showToast('聊天選單：重新命名、匯出、刪除'); return; }
-    $$('.chat-row').forEach(item => item.classList.remove('is-active')); row.classList.add('is-active'); $('#chat-title').textContent = row.dataset.title;
-    if (isNarrow()) closeFloatingSidebar(); showToast(`已切換到「${row.dataset.title}」`);
-  });
+  if (!hosted) {
+    for (const row of $$('.chat-row')) {
+      const chat = { row, messages: [], draft: '', settings: {} };
+      if (row.classList.contains('is-active')) activeChat = chat;
+      row.onclick = event => {
+        if (event.target.closest('.row-more')) { showToast('聊天選單：重新命名、匯出、刪除'); return; }
+        if (activeChat !== chat) switchLocalChat(chat);
+        if (isNarrow()) closeFloatingSidebar();
+      };
+    }
+  }
   $('#new-chat').onclick = () => {
     if (hosted) return hostedUi?.newChat();
     if (generating) return;
-    if (localModel) {
-      startLocalChat();
-    } else {
-      $$('.chat-row').forEach(item => item.classList.remove('is-active'));
-      $('#chat-title').textContent = '新聊天';
-    }
+    startLocalChat();
     if (isNarrow()) closeFloatingSidebar();
     input.focus();
     showToast('已建立新聊天');
@@ -481,10 +515,11 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       });
       return;
     }
+    const target = activeChat;
     addMessage(text, 'user');
     input.value = '';
     resizeInput();
-    setTimeout(() => addMessage('這是介面互動展示；模型串接完成後，回覆會從你的模型服務送回這裡。', 'assistant'), 380);
+    setTimeout(() => addMessage('這是介面互動展示；模型串接完成後，回覆會從你的模型服務送回這裡。', 'assistant', target), 380);
   };
   input.oninput = resizeInput; input.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); } };
   document.addEventListener('keydown', event => {
@@ -499,11 +534,10 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     if (!isNarrow()) shell.classList.remove('sidebar-open');
     if (toolPicker.matches(':popover-open')) positionToolPicker();
   });
-  loadGenerationSettings();
   if (hosted) {
     import('./hosted/ui.mjs').then(({ createHostedUi }) => {
       hostedUi = createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
-        closeFloatingSidebar, isNarrow, renderAccount, getGeneration: () => generation });
+        closeFloatingSidebar, isNarrow, renderAccount });
       return hostedUi.init();
     }).catch(() => { chatStatus.textContent = '網站聊天模組無法載入。'; });
   } else {

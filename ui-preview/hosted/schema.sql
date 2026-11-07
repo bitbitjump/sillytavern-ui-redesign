@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS chats (
 );
 CREATE INDEX IF NOT EXISTS chats_owner ON chats (owner, updated DESC);
 
+CREATE TABLE IF NOT EXISTS chat_settings (
+    chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+    settings TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

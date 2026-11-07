@@ -85,6 +85,24 @@ try {
     assert.equal((await call(chatPath, { ...alice, body: { text: 'before approval' } })).status, 409);
     assert.equal((await call(chatPath, bob)).status, 404);
     assert.equal((await call(chatPath, { ...bob, body: { text: 'try other account' } })).status, 404);
+    const settingsPath = `${chatPath}/settings`;
+    const contextA = { world: '雨夜書店', instructions: '用書信形式回答' };
+    const contextB = { world: '木星空間站', instructions: '用任務簡報回答' };
+    assert.equal((await call(settingsPath, { ...alice, body: { context: { world: [] } } })).status, 400);
+    assert.equal((await call(settingsPath, { ...alice, body: { context: contextA }, origin: 'https://other.test' })).status, 403);
+    assert.equal((await call(settingsPath, bob)).status, 404);
+    assert.equal((await call(settingsPath, { ...bob, body: { context: contextB } })).status, 404);
+    const oldRoom = crypto.randomUUID();
+    db.prepare('INSERT INTO chats (id,owner,title,updated) VALUES (?,?,?,?)').bind(oldRoom, 'alice', '既有聊天室', Date.now()).run();
+    assert.deepEqual((await (await call(`/api/tavern/chats/${oldRoom}`, alice)).json()).settings, {});
+    const firstGeneration = { style: 'witty', temperature: 0.8 };
+    await call(settingsPath, { ...alice, body: { context: contextA } });
+    await call(settingsPath, { ...alice, body: { generation: firstGeneration } });
+    const second = await (await call('/api/tavern/chats', { ...alice, body: {
+        settings: { context: contextB, generation: { style: 'concise', temperature: 0.2 } },
+    } })).json();
+    const secondPath = `/api/tavern/chats/${second.id}`;
+    assert.deepEqual((await (await call(settingsPath, alice)).json()).settings, { context: contextA, generation: firstGeneration });
 
     await mac.step();
     assert.equal(starts, 0);
@@ -110,19 +128,28 @@ try {
 
     const nearExpiry = Date.now() + 2_000;
     db.prepare('UPDATE approvals SET expires=? WHERE id=?').bind(nearExpiry, approval.id).run();
-    const result = await call(chatPath, { ...alice, body: { text: 'Alice private test', generation: { style: 'witty', temperature: 0.8 } } });
+    const result = await call(chatPath, { ...alice, body: { text: 'Alice private test' } });
     assert.equal(result.status, 202);
     const { job } = await result.json();
     const queued = await db.prepare('SELECT expires FROM jobs WHERE id=?').bind(job).first();
     assert.ok(queued.expires > nearExpiry);
     assert.ok((await (await call('/api/tavern/status', alice)).json()).approval.expires > nearExpiry);
     assert.equal((await call(chatPath, { ...alice, body: { text: 'concurrent' } })).status, 409);
+    assert.equal((await call(secondPath, { ...alice, body: { text: '另一間聊天室' } })).status, 202);
     sleeping = true;
     await mac.step();
     assert.equal(starts, 1);
     assert.equal(upstreamRequest.model, model);
     assert.equal(upstreamRequest.temperature, 0.8);
     assert.equal(upstreamRequest.messages[0].role, 'system');
+    assert.match(upstreamRequest.messages[0].content, /雨夜書店[\s\S]*用書信形式回答/);
+    assert.doesNotMatch(JSON.stringify(upstreamRequest.messages), /木星空間站|另一間聊天室/);
+    await mac.step();
+    assert.equal(upstreamRequest.temperature, 0.2);
+    assert.match(upstreamRequest.messages[0].content, /木星空間站[\s\S]*用任務簡報回答/);
+    assert.doesNotMatch(JSON.stringify(upstreamRequest.messages), /雨夜書店|Alice private test/);
+    assert.deepEqual((await (await call(secondPath, alice)).json()).messages.map(message => message.content),
+        ['另一間聊天室', 'model answer']);
     const saved = await (await call(chatPath, alice)).json();
     assert.deepEqual(saved.messages.map(message => message.content), ['Alice private test', 'model answer']);
     assert.equal(saved.job.state, 'done');
@@ -133,7 +160,7 @@ try {
     db.prepare('UPDATE approvals SET expires=0 WHERE id=?').bind(approval.id).run();
     assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'expired');
     assert.equal((await call(chatPath, { ...alice, body: { text: 'after timeout' } })).status, 409);
-    console.log('通過：私人聊天室隔離、簽章和批准者驗證、避免重複私訊與啟動、閒置重載、聊天參數、過期重新申請。');
+    console.log('通過：帳號與聊天室隔離、獨立世界觀和生成設定、批准者驗證、避免重複啟動、閒置重載、過期重新申請。');
 } finally {
     db.close();
 }

@@ -22,7 +22,7 @@ async function api(path, body) {
     return data;
 }
 
-export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount, getGeneration }) {
+export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount }) {
     const input = $('#message-input');
     const send = $('#send-button');
     const dialog = $('#utility-panel');
@@ -30,8 +30,10 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
     const panelStatus = $('#panel-status');
     const chatStatus = $('#chat-status');
     let status;
-    let chatId;
-    let busy = false;
+    const rooms = new Map();
+    const emptyRoom = () => ({ id: null, title: '新聊天', messages: [], settings: {}, draft: '', notice: '' });
+    let room = emptyRoom();
+    let selection = 0;
     let statusTimer;
     let renderedModelPanel;
 
@@ -94,18 +96,45 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         queueMicrotask(refreshStatus);
     }
 
-    function showChat(chat) {
-        chatId = chat.id;
-        $('#chat-title').textContent = chat.title;
+    function renderRoom() {
+        $('#chat-title').textContent = room.title;
         $$('#conversation .message').forEach(message => message.remove());
-        $$('.chat-row').forEach(row => row.classList.toggle('is-active', row.dataset.chatId === chatId));
-        for (const message of chat.messages) {
+        $$('.chat-row').forEach(row => row.classList.toggle('is-active', row.dataset.chatId === room.id));
+        for (const message of room.messages) {
             const article = addMessage(message.content, message.role);
             article.querySelector('.message__body').innerHTML = `<p>${escapeHtml(message.content).replace(/\n/g, '<br>')}</p>`;
             article.querySelector('[data-action="edit"]')?.remove();
             const author = article.querySelector('.message__identity strong');
             if (author) author.textContent = status.model;
         }
+        input.value = room.draft;
+        resizeInput();
+        input.readOnly = send.disabled = !!room.busy;
+        chatStatus.textContent = room.notice;
+    }
+
+    function activateRoom(next) {
+        if (!room.busy) room.draft = input.value;
+        room = next;
+        renderRoom();
+    }
+
+    async function readRoom(id) {
+        const cached = rooms.get(id);
+        if (cached?.busy || cached?.saving) return cached;
+        const previousMessages = cached?.messages;
+        const previousSettings = cached?.settings;
+        const chat = await api(`/chats/${id}`);
+        const loaded = rooms.get(id);
+        if (loaded) {
+            if (!loaded.busy && !loaded.saving && loaded.messages === previousMessages && loaded.settings === previousSettings) {
+                Object.assign(loaded, chat);
+            }
+            return loaded;
+        }
+        const next = Object.assign(emptyRoom(), chat);
+        rooms.set(id, next);
+        return next;
     }
 
     async function refreshChats() {
@@ -118,19 +147,18 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
             row.className = 'chat-row';
             row.dataset.title = chat.title;
             row.dataset.chatId = chat.id;
-            row.classList.toggle('is-active', chat.id === chatId);
+            row.classList.toggle('is-active', chat.id === room.id);
             row.innerHTML = '<i class="fa-solid fa-comments" aria-hidden="true"></i><span></span>';
             row.querySelector('span').textContent = chat.title;
             row.onclick = async () => {
-                if (busy) return;
+                const selected = ++selection;
                 try {
-                    showChat(await api(`/chats/${chat.id}`));
-                    input.value = '';
-                    resizeInput();
-                    chatStatus.textContent = '';
+                    const next = await readRoom(chat.id);
+                    if (selected !== selection || dialog.open) return;
+                    activateRoom(next);
                     if (isNarrow()) closeFloatingSidebar();
                 } catch (error) {
-                    chatStatus.textContent = error.message;
+                    if (selected === selection) chatStatus.textContent = error.message;
                 }
             };
             group.append(row);
@@ -139,30 +167,58 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
     }
 
     function newChat() {
-        if (!status || busy) return;
-        input.value = '';
-        resizeInput();
-        chatStatus.textContent = '';
-        showChat({ id: null, title: '新聊天', messages: [] });
+        if (!status) return;
+        selection++;
+        activateRoom(emptyRoom());
         if (isNarrow()) closeFloatingSidebar();
         input.focus();
     }
 
+    function getSettings() {
+        return room.settings;
+    }
+
+    async function saveSettings(patch) {
+        if (!status) throw new Error('請先登入。');
+        const target = room;
+        if (target.saving || (!target.id && target.busy)) throw new Error('聊天室正在建立，請稍後再試。');
+        target.saving = true;
+        try {
+            if (target.id) {
+                const { settings } = await api(`/chats/${target.id}/settings`, patch);
+                target.settings = settings;
+            } else {
+                Object.assign(target, await api('/chats', { settings: patch }));
+                rooms.set(target.id, target);
+                await refreshChats();
+            }
+        } finally {
+            target.saving = false;
+        }
+    }
+
     async function sendMessage(text) {
-        if (busy || !status) return;
-        busy = true;
+        if (room.busy || room.saving || !status) return;
+        const target = room;
+        target.busy = true;
+        target.draft = input.value;
         send.disabled = true;
         input.readOnly = true;
         try {
             status = await api('/status');
             if (status.approval?.state !== 'ready') {
-                openPanel('models');
+                if (target === room) openPanel('models');
                 return;
             }
-            if (!chatId) showChat(await api('/chats', {}));
-            const path = `/chats/${chatId}`;
-            const { job } = await api(path, { text, generation: getGeneration() });
-            chatStatus.textContent = '模型正在處理…';
+            if (!target.id) {
+                Object.assign(target, await api('/chats', {}));
+                rooms.set(target.id, target);
+                await refreshChats();
+            }
+            const path = `/chats/${target.id}`;
+            const { job } = await api(path, { text });
+            target.notice = '模型正在處理…';
+            if (target === room) chatStatus.textContent = target.notice;
             const deadline = Date.now() + 305_000;
             while (Date.now() < deadline) {
                 await new Promise(resolve => setTimeout(resolve, 1100));
@@ -170,20 +226,19 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
                 if (chat.job?.id !== job) throw new Error('工作狀態已變更，請重新開啟聊天室。');
                 if (chat.job.state === 'failed') throw new Error(chat.job.error);
                 if (chat.job.state !== 'done') continue;
-                showChat(chat);
-                input.value = '';
-                resizeInput();
-                chatStatus.textContent = '';
+                target.title = chat.title;
+                target.messages = chat.messages;
+                target.draft = '';
+                target.notice = '';
                 await refreshChats();
                 return;
             }
             throw new Error('等待模型逾時，請重新開啟聊天室確認。');
         } catch (error) {
-            chatStatus.textContent = error.message;
+            target.notice = error.message;
         } finally {
-            busy = false;
-            input.readOnly = false;
-            send.disabled = false;
+            target.busy = false;
+            if (target === room) renderRoom();
         }
     }
 
@@ -206,7 +261,10 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
             $('.conversation__intro p').textContent = testMode ? '本機整合測試 · Discord 與模型皆為模擬' : '在「模型」送出使用請求。';
             input.placeholder = '輸入訊息';
             const chats = await refreshChats();
-            if (chats[0]) showChat(await api(`/chats/${chats[0].id}`));
+            if (chats[0] && selection === 0) {
+                const first = await readRoom(chats[0].id);
+                if (selection === 0 && !dialog.open) activateRoom(first);
+            }
             send.disabled = false;
             input.disabled = false;
             document.addEventListener('visibilitychange', () => {
@@ -218,5 +276,5 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         }
     }
 
-    return { init, modelPanel, newChat, sendMessage };
+    return { init, modelPanel, newChat, sendMessage, getSettings, saveSettings };
 }
