@@ -8,7 +8,7 @@
     <link href="../public/webfonts/NotoSans/stylesheet.css" rel="stylesheet">
     <link href="../public/css/fontawesome.min.css" rel="stylesheet">
     <link href="../public/css/solid.min.css" rel="stylesheet">
-    <link href="app.css?v=9" rel="stylesheet">
+    <link href="app.css?v=10" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell" id="app-shell">
@@ -51,7 +51,7 @@
                 <div class="topbar__side"><button class="icon-button sidebar__open" id="sidebar-open" type="button" aria-label="開啟側欄" title="開啟側欄"><i class="fa-solid fa-bars"></i></button></div>
                 <button class="model-selector" type="button" data-panel="models"><span id="current-model">Tavern Story 7B</span><i class="fa-solid fa-chevron-down"></i></button>
                 <div class="topbar__actions">
-                    <span class="connection-status"><i></i>展示模式</span>
+                    <span class="connection-status" id="connection-status"><i></i><span>展示模式</span></span>
                     <button class="icon-button" type="button" data-panel="roles" aria-label="角色" title="角色"><i class="fa-solid fa-user-group"></i></button>
                     <button class="icon-button" type="button" data-panel="settings" aria-label="聊天設定" title="聊天設定"><i class="fa-solid fa-ellipsis"></i></button>
                 </div>
@@ -90,6 +90,7 @@
                         <button class="send-button" id="send-button" type="submit" aria-label="傳送"><i class="fa-solid fa-arrow-up"></i></button>
                     </div>
                     <div class="composer__meta"><div><button type="button" data-panel="tools"><i class="fa-solid fa-wand-magic-sparkles"></i> 工具</button><button type="button" data-panel="roles"><i class="fa-solid fa-feather"></i> 書店寫作助手</button></div><span>AI 可能會犯錯，請確認重要內容。</span></div>
+                    <p id="chat-status" class="chat-status" role="status"></p>
                 </form>
             </footer>
         </main>
@@ -100,6 +101,6 @@
         </dialog>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=10"></script>
 </body>
 </html>

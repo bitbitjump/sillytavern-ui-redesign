@@ -11,11 +11,114 @@
   const conversation = $('#conversation');
   const composer = $('#composer');
   const input = $('#message-input');
+  const sendButton = $('#send-button');
+  const chatStatus = $('#chat-status');
   const toast = $('#toast');
   const isNarrow = () => matchMedia('(max-width: 940px)').matches;
   const versions = new WeakMap();
   let toastTimer;
   let pointerStartedOnBackdrop = false;
+  let localModel;
+  let generating = false;
+  let activeChat;
+
+  async function modelApi(path, body) {
+    const response = await fetch(`/api/local-model${path}`, body === undefined ? {} : {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '本機後端回應異常。');
+    return data;
+  }
+
+  function startLocalChat() {
+    if (generating) return;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'chat-row';
+    row.dataset.title = '新聊天';
+    row.innerHTML = '<i class="fa-solid fa-comments" aria-hidden="true"></i><span>新聊天</span>';
+    const chat = { row, messages: [], draft: '' };
+    row.addEventListener('click', () => {
+      if (generating) return;
+      switchLocalChat(chat);
+      if (isNarrow()) closeFloatingSidebar();
+    });
+    $('#chat-history .chat-group').append(row);
+    switchLocalChat(chat);
+  }
+
+  function switchLocalChat(chat) {
+    if (activeChat) {
+      activeChat.messages = $$('.message', conversation);
+      activeChat.draft = input.value;
+      activeChat.row.classList.remove('is-active');
+      activeChat.messages.forEach(message => message.remove());
+    }
+    activeChat = chat;
+    chat.row.classList.add('is-active');
+    $('#chat-title').textContent = chat.row.dataset.title;
+    conversation.append(...chat.messages);
+    input.value = chat.draft;
+    resizeInput();
+    chatStatus.textContent = '';
+    conversation.scrollTop = conversation.scrollHeight;
+  }
+
+  async function initLocalModel() {
+    if (!['127.0.0.1', 'localhost'].includes(location.hostname)) return;
+    try {
+      const config = await modelApi('');
+      if (!['mock', 'remote'].includes(config.mode) || typeof config.model !== 'string') return;
+      localModel = config;
+    } catch {
+      return; // Standalone static preview.
+    }
+    $('#current-model').textContent = localModel.model;
+    $('#connection-status span').textContent = localModel.mode === 'mock' ? '測試模式' : '模型模式';
+    $('.conversation__intro p').textContent = localModel.mode === 'mock'
+      ? '本機測試模式 · 回覆由測試後端產生'
+      : '本機版 · 透過後端連接設定的模型';
+    input.placeholder = '輸入訊息';
+    $$('.message', conversation).forEach(message => message.remove());
+    $('#chat-history').innerHTML = '<section class="chat-group"><h2>這次開啟的聊天</h2></section>';
+    startLocalChat();
+  }
+
+  function chatContext(before) {
+    const messages = [];
+    for (const article of $$('.message', conversation)) {
+      if (article === before) break;
+      messages.push({
+        role: article.classList.contains('message--user') ? 'user' : 'assistant',
+        content: messageText(article),
+      });
+    }
+    return messages;
+  }
+
+  async function runLocalGeneration(messages, onReply) {
+    if (generating) return;
+    generating = true;
+    input.readOnly = true;
+    sendButton.disabled = true;
+    chatStatus.textContent = '正在等待模型回覆…';
+    try {
+      const result = await modelApi('/chat', { messages });
+      onReply(result.content);
+      chatStatus.textContent = '';
+      return true;
+    } catch (error) {
+      chatStatus.textContent = error.message;
+      return false;
+    } finally {
+      generating = false;
+      input.readOnly = false;
+      sendButton.disabled = false;
+    }
+  }
 
   const panelData = {
     roles: ['角色與人格', '選擇角色', `
@@ -67,7 +170,31 @@
     const data = panelData[kind] || panelData.tools;
     panelEyebrow.textContent = data[0];
     panelTitle.textContent = data[1];
-    panelContent.innerHTML = data[2];
+    if (kind === 'models' && localModel) {
+      panelContent.innerHTML = `
+        <p class="panel-note"><strong id="configured-model"></strong><br>
+          模型連線由本機啟動設定管理。</p>
+        <button class="panel-card" type="button" id="check-model">
+          <span class="panel-card__icon"><i class="fa-solid fa-plug"></i></span>
+          <span><strong>測試連線</strong><small>檢查端點和模型 ID</small></span>
+        </button>`;
+      $('#configured-model').textContent = localModel.model;
+      const check = $('#check-model');
+      check.addEventListener('click', async () => {
+        check.disabled = true;
+        panelStatus.textContent = '檢查中…';
+        try {
+          const result = await modelApi('/check', {});
+          if (check.isConnected && panel.open) panelStatus.textContent = result.status;
+        } catch (error) {
+          if (check.isConnected && panel.open) panelStatus.textContent = error.message;
+        } finally {
+          check.disabled = false;
+        }
+      });
+    } else {
+      panelContent.innerHTML = data[2];
+    }
     panelStatus.textContent = '';
     pointerStartedOnBackdrop = false;
     panel.showModal();
@@ -102,17 +229,27 @@
     catch { showToast('瀏覽器未允許複製'); }
   }
   function editMessage(article) {
-    if ($('.message-editor', article)) return;
+    if (generating || $('.message-editor', article)) return;
     const body = $('.message__body', article); const actions = $('.message-actions', article); const original = body.innerText.trim();
     body.hidden = true; actions.hidden = true;
     const editor = document.createElement('div');
     editor.innerHTML = '<textarea class="message-editor" aria-label="編輯訊息"></textarea><div class="edit-controls"><button class="cancel-edit" type="button">取消</button><button class="save-edit" type="button">儲存並送出</button></div>';
     $('.message-editor', editor).value = original; article.insertBefore(editor, actions); $('.message-editor', editor).focus();
+    if (localModel) $('.save-edit', editor).textContent = '儲存修改';
     $('.cancel-edit', editor).onclick = () => { editor.remove(); body.hidden = false; actions.hidden = false; };
     $('.save-edit', editor).onclick = () => { const value = $('.message-editor', editor).value.trim(); if (!value) return; body.innerHTML = `<p>${escapeHtml(value).replace(/\n/g, '<br>')}</p>`; editor.remove(); body.hidden = false; actions.hidden = false; showToast('已更新訊息，舊回覆仍保留'); };
   }
   function regenerate(article) {
     const content = $('.version-content', article); const list = versions.get(article) || [content.innerHTML];
+    if (localModel) {
+      runLocalGeneration(chatContext(article), reply => {
+        list.push(`<p>${escapeHtml(reply).replace(/\n/g, '<br>')}</p>`);
+        versions.set(article, list);
+        article.dataset.version = String(list.length - 1);
+        renderVersion(article);
+      });
+      return;
+    }
     const options = [
       '<p>已記住。這一次，門上的鈴沒有立刻響。</p><p>周澈把藍傘靠在門邊，水珠沿著傘骨慢慢墜落。他看著林岑，像是在等一句遲了五年的話。林岑只把熱茶推過去，指尖在杯緣停了一下。</p><blockquote>「先坐吧，雨一時不會停。」</blockquote><p>於是周澈坐下，而雨替他們把沉默說完。</p>',
       '<p>書店裡仍留著舊紙張與雨水混在一起的氣味。</p><p>林岑沒有問他為什麼回來，只從櫃檯下拿出一條乾毛巾。周澈接過時笑得很輕，藍傘在腳邊滴出一圈小小的水痕。</p><blockquote>「你還留著那盞燈。」</blockquote><p>林岑望向窗邊：「怕有人找不到路。」</p>'
@@ -130,6 +267,19 @@
     article.innerHTML = who === 'user'
       ? `<div class="message__body"><p>${escapeHtml(text).replace(/\n/g, '<br>')}</p></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button><button type="button" data-action="edit"><i class="fa-solid fa-pen"></i><span>編輯</span></button></div>`
       : `<div class="message__identity"><div class="assistant-avatar assistant-avatar--small"><i class="fa-solid fa-feather-pointed"></i></div><div><strong>書店寫作助手</strong><small>剛剛</small></div></div><div class="message__body"><p>${escapeHtml(text)}</p></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button></div>`;
+    if (localModel && who === 'assistant') {
+      const body = $('.message__body', article);
+      body.classList.add('version-content');
+      body.innerHTML = `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`;
+      $('.message__identity strong', article).textContent = localModel.model;
+      $('.message-actions', article).insertAdjacentHTML('beforeend', `
+        <button type="button" data-action="regenerate" title="重新回覆"><i class="fa-solid fa-rotate-right"></i><span>重新回覆</span></button>
+        <div class="version-switch" hidden>
+          <button type="button" data-version-nav="prev" aria-label="上一個版本">‹</button>
+          <span class="version-label"></span>
+          <button type="button" data-version-nav="next" aria-label="下一個版本">›</button>
+        </div>`);
+    }
     conversation.appendChild(article); conversation.scrollTop = conversation.scrollHeight; return article;
   }
 
@@ -159,9 +309,46 @@
     $$('.chat-row').forEach(item => item.classList.remove('is-active')); row.classList.add('is-active'); $('#chat-title').textContent = row.dataset.title;
     if (isNarrow()) closeFloatingSidebar(); showToast(`已切換到「${row.dataset.title}」`);
   });
-  $('#new-chat').onclick = () => { $$('.chat-row').forEach(item => item.classList.remove('is-active')); $('#chat-title').textContent = '新聊天'; if (isNarrow()) closeFloatingSidebar(); input.focus(); showToast('已建立新聊天'); };
+  $('#new-chat').onclick = () => {
+    if (generating) return;
+    if (localModel) {
+      startLocalChat();
+    } else {
+      $$('.chat-row').forEach(item => item.classList.remove('is-active'));
+      $('#chat-title').textContent = '新聊天';
+    }
+    if (isNarrow()) closeFloatingSidebar();
+    input.focus();
+    showToast('已建立新聊天');
+  };
   $('#chat-search').oninput = event => { const query = event.target.value.trim().toLocaleLowerCase(); $$('.chat-row').forEach(row => { row.hidden = Boolean(query && !row.dataset.title.toLocaleLowerCase().includes(query)); }); $$('.chat-group').forEach(group => { group.hidden = !$$('.chat-row', group).some(row => !row.hidden); }); };
-  composer.onsubmit = event => { event.preventDefault(); const text = input.value.trim(); if (!text) return; addMessage(text, 'user'); input.value = ''; resizeInput(); setTimeout(() => addMessage('這是介面互動展示；模型串接完成後，回覆會從你的模型服務送回這裡。', 'assistant'), 380); };
+  composer.onsubmit = event => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text || generating) return;
+    if (localModel) {
+      const context = chatContext();
+      const pending = addMessage(text, 'user');
+      runLocalGeneration([...context, { role: 'user', content: text }], reply => {
+        addMessage(reply, 'assistant');
+        if (context.length === 0) {
+          const title = text.slice(0, 28);
+          activeChat.row.dataset.title = title;
+          $('span', activeChat.row).textContent = title;
+          $('#chat-title').textContent = title;
+        }
+        input.value = '';
+        resizeInput();
+      }).then(succeeded => {
+        if (!succeeded) pending.remove();
+      });
+      return;
+    }
+    addMessage(text, 'user');
+    input.value = '';
+    resizeInput();
+    setTimeout(() => addMessage('這是介面互動展示；模型串接完成後，回覆會從你的模型服務送回這裡。', 'assistant'), 380);
+  };
   input.oninput = resizeInput; input.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); } };
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !panel.open) closeFloatingSidebar();
@@ -171,4 +358,5 @@
     }
   });
   addEventListener('resize', () => { if (!isNarrow()) shell.classList.remove('sidebar-open'); });
+  initLocalModel();
 })();

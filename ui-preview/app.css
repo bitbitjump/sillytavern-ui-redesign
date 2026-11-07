@@ -89,6 +89,14 @@
   font-size: 12px;
 }
 .utility-panel__status:empty { padding: 0; border: 0; }
+.chat-status {
+  margin: 0;
+  padding: 0 16px 10px;
+  color: var(--accent2);
+  font-size: 12px;
+}
+.chat-status:empty { display: none; }
+.chat-row[hidden], .message-actions[hidden], .version-switch[hidden] { display: none; }
 @media (max-width: 940px) {
   .sidebar-open .sidebar { pointer-events: auto; }
 }
