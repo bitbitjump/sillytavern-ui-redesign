@@ -15,7 +15,7 @@ let lastNotification;
 let modelStarted = false;
 const token = crypto.randomUUID();
 const env = {
-    DB: createLocalDb(),
+    DB: createLocalDb(process.env.TAVERN_DEV_DB),
     TAVERN_ALLOWED_EMAILS: 'alice@example.test,bob@example.test',
     TAVERN_CONNECTOR_TOKEN: token,
     DISCORD_APPROVER_ID: approver,

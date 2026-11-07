@@ -28,7 +28,7 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
   let localModel;
   let generating = false;
   let activeChat;
-  let selectedReply;
+  let rewritePointerSelection;
   const hosted = document.body.hasAttribute('data-hosted');
   let hostedUi;
   let accountProfile = {};
@@ -555,6 +555,7 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
     closeToolPicker();
     closeAccountMenu();
     panelEyebrow.textContent = data[0];
+    panel.dataset.view = kind;
     if (kind === 'settings' || kind === 'generation') panelEyebrow.textContent = $('#chat-title').textContent;
     panelTitle.textContent = data[1];
     if (kind === 'generation') {
@@ -599,9 +600,24 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
     panel.showModal();
     panelContent.scrollTop = 0;
     if (focusPrompt) $('textarea[name="systemPrompt"]', panelContent).focus();
-    if (kind === 'rewrite') $('textarea[name="instruction"]', panelContent).focus();
+    if (kind === 'rewrite') {
+      fitRewritePanel();
+      if (rewriteSelection.text && matchMedia('(hover: hover) and (pointer: fine)').matches) {
+        $('textarea[name="instruction"]', panelContent).focus();
+      }
+    }
   }
   function closePanel() { panel.close(); }
+
+  function fitRewritePanel() {
+    const viewport = window.visualViewport;
+    if (!viewport || !panel.open || panel.dataset.view !== 'rewrite') return;
+    panel.style.setProperty('--visible-top', `${viewport.offsetTop}px`);
+    panel.style.setProperty('--visible-bottom', `${Math.max(0, innerHeight - viewport.height - viewport.offsetTop)}px`);
+    panel.style.setProperty('--visible-height', `${viewport.height}px`);
+  }
+  window.visualViewport?.addEventListener('resize', fitRewritePanel);
+  window.visualViewport?.addEventListener('scroll', fitRewritePanel);
   panel.addEventListener('close', () => {
     if ($('#appearance-form')) applyAppearance(savedAppearance);
   });
@@ -654,19 +670,40 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
     const paragraph = $('.message__text', body);
     if (!paragraph) return null;
     const article = body.closest('.message');
-    const button = $('[data-action="rewrite"]', article);
     const text = range.toString();
-    if (!button || !text.trim()) return null;
+    if (!text.trim()) return null;
     const prefix = document.createRange();
     prefix.selectNodeContents(paragraph);
     prefix.setEnd(startNode, range.startOffset);
     const start = prefix.toString().length;
-    return { article, button, text, start, end: start + text.length };
+    return { article, text, start, end: start + text.length };
   }
 
-  function renderRewriteForm({ article, text, start, end }) {
+  function rewriteSentences(source) {
+    const sentences = [];
+    const segmenter = Intl.Segmenter && new Intl.Segmenter('zh-Hant', { granularity: 'sentence' });
+    for (const line of source.matchAll(/[^\r\n]+/g)) {
+      const segments = segmenter ? segmenter.segment(line[0]) : [{ segment: line[0], index: 0 }];
+      for (const { segment, index } of segments) {
+        const text = segment.trim();
+        if (!text) continue;
+        const start = line.index + index + segment.length - segment.trimStart().length;
+        sentences.push({ start, end: start + text.length, text });
+      }
+    }
+    return sentences;
+  }
+
+  function renderRewriteForm({ article, text, start, end, instruction: previousInstruction = '' }) {
+    const source = messageText(article);
     panelContent.innerHTML = `
       <form class="generation-form">
+        ${text ? '' : `
+          <p class="room-settings-note">選同一句可以只改一句，也可以選起始句和結束句。</p>
+          <div class="rewrite-range">
+            <label class="generation-field"><span>起始句</span><select name="first"></select></label>
+            <label class="generation-field"><span>結束句</span><select name="last"></select></label>
+          </div>`}
         <blockquote class="rewrite-excerpt"></blockquote>
         <label class="generation-field">
           <span>想怎麼改？</span>
@@ -674,12 +711,43 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
         </label>
         <div class="generation-actions"><button type="submit">產出完整新版</button></div>
       </form>`;
-    $('.rewrite-excerpt', panelContent).textContent = text;
-    $('form', panelContent).onsubmit = event => {
+    const form = $('form', panelContent);
+    const excerpt = $('.rewrite-excerpt', panelContent);
+    const instructionField = form.elements.namedItem('instruction');
+    instructionField.value = previousInstruction;
+    if (text) {
+      excerpt.textContent = text;
+    } else {
+      const sentences = rewriteSentences(source);
+      const first = form.elements.namedItem('first');
+      const last = form.elements.namedItem('last');
+      for (const [index, sentence] of sentences.entries()) {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = `${index + 1}. ${sentence.text.length > 60 ? sentence.text.slice(0, 60) + '…' : sentence.text}`;
+        first.append(option);
+        last.append(option.cloneNode(true));
+      }
+      function updateRange() {
+        start = sentences[Number(first.value)]?.start;
+        end = sentences[Number(last.value)]?.end;
+        excerpt.textContent = source.slice(start, end);
+      }
+      first.onchange = () => {
+        last.value = first.value;
+        updateRange();
+      };
+      last.onchange = () => {
+        if (Number(last.value) < Number(first.value)) first.value = last.value;
+        updateRange();
+      };
+      updateRange();
+    }
+    form.onsubmit = event => {
       event.preventDefault();
       const instruction = new FormData(event.currentTarget).get('instruction').trim();
-      if (!instruction) {
-        panelStatus.textContent = '請輸入改寫要求。';
+      if (!instruction || start === undefined || end === undefined) {
+        panelStatus.textContent = '請選取文字並輸入改寫要求。';
         return;
       }
       closePanel();
@@ -691,19 +759,17 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
         runLocalGeneration([request], reply => {
           addMessage(request.content, 'user');
           addMessage(reply, 'assistant');
-        }, { ...range, source: messageText(article) });
+        }, { ...range, source });
       }
     };
   }
 
-  document.addEventListener('selectionchange', () => {
-    const next = readReplySelection();
-    if (selectedReply && selectedReply.button !== next?.button) selectedReply.button.disabled = true;
-    if (next) next.button.disabled = false;
-    selectedReply = next;
-  });
   conversation.addEventListener('pointerdown', event => {
-    if (event.target.closest('[data-action="rewrite"]')) event.preventDefault();
+    const trigger = event.target.closest('[data-action="rewrite"]');
+    if (!trigger) return;
+    const selection = readReplySelection();
+    rewritePointerSelection = selection?.article === trigger.closest('.message') ? selection : null;
+    if (rewritePointerSelection && event.pointerType === 'mouse') event.preventDefault();
   });
 
   function editMessage(article) {
@@ -718,6 +784,14 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
     $('.save-edit', editor).onclick = () => { const value = $('.message-editor', editor).value.trim(); if (!value) return; setMessageText(body, value); editor.remove(); body.hidden = false; actions.hidden = false; showToast('已更新訊息，舊回覆仍保留'); };
   }
   function regenerate(article) {
+    if (hosted) {
+      if (article.dataset.legacyRewrite) {
+        openPanel('rewrite', { article, instruction: article.dataset.legacyRewrite });
+      } else {
+        hostedUi.retryMessage(Number(article.dataset.messageIndex));
+      }
+      return;
+    }
     const content = $('.version-content', article);
     const list = versions.get(article) || [localModel ? { text: messageText(article) } : { html: content.innerHTML }];
     if (localModel) {
@@ -754,7 +828,11 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
     setMessageText(body, text);
     if (who === 'assistant' && (localModel || hosted)) {
       $('.message-actions', article).insertAdjacentHTML('beforeend',
-        '<button class="rewrite-reply" type="button" data-action="rewrite" disabled><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>改寫選取文字</span></button>');
+        '<button class="rewrite-reply" type="button" data-action="rewrite"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>改寫選取文字</span></button>');
+    }
+    if (who === 'assistant' && hosted) {
+      $('.message-actions', article).insertAdjacentHTML('beforeend',
+        '<button class="retry-reply" type="button" data-action="regenerate"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span>重新回覆</span></button>');
     }
     if (localModel && who === 'assistant') {
       body.classList.add('version-content');
@@ -771,7 +849,7 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
       targetChat.messages.push(article);
     } else {
       conversation.appendChild(article);
-      conversation.scrollTop = conversation.scrollHeight;
+      if (!hosted) conversation.scrollTo({ top: conversation.scrollHeight, behavior: 'instant' });
     }
     return article;
   }
@@ -785,7 +863,11 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
       if (action.dataset.action === 'copy') copyMessage(article);
       if (action.dataset.action === 'edit') editMessage(article);
       if (action.dataset.action === 'regenerate') regenerate(article);
-      if (action.dataset.action === 'rewrite' && selectedReply?.article === article) openPanel('rewrite', selectedReply);
+      if (action.dataset.action === 'rewrite') {
+        const selection = readReplySelection() ?? (event.detail ? rewritePointerSelection : null);
+        rewritePointerSelection = null;
+        openPanel('rewrite', selection?.article === article ? selection : { article });
+      }
     }
     const nav = event.target.closest('[data-version-nav]'); if (nav) { const article = nav.closest('.message'); article.dataset.version = String(Number(article.dataset.version || 0) + (nav.dataset.versionNav === 'prev' ? -1 : 1)); renderVersion(article); }
     const role = event.target.closest('[data-select-role]');

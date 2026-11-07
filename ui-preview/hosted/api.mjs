@@ -179,6 +179,8 @@ async function connector(request, env, path, now) {
             .bind(ok ? 'ready' : 'failed', now + activityWindow, job.approval_id, job.id, job.lease, now));
     } else if (ok) {
         const reply = { role: 'assistant', content };
+        if (input.selection) reply.rewrite = input.selection;
+        if (input.retryOf !== undefined) reply.retryOf = input.retryOf;
         statements.push(env.DB.prepare(`UPDATE chats SET title=?,messages=?,updated=? WHERE id=? AND owner=?
             AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND lease=? AND state='running' AND expires>?)`)
             .bind(input.title, JSON.stringify([...input.history, reply]), now, job.chat_id, job.owner, job.id, job.lease, now));
@@ -274,19 +276,34 @@ async function chatRoute(request, env, path, owner, now) {
     }
     const body = await readJson(request);
     let rewrite;
+    let selection = body.rewrite;
+    let retryOf;
     let userText;
-    if (body.rewrite !== undefined) {
-        const { index } = body.rewrite || {};
+    if (body.retry !== undefined) {
+        const reply = Number.isInteger(body.retry) && messages[body.retry];
+        if (reply?.role !== 'assistant') throw new HttpError(400, '找不到要重新回覆的訊息。');
+        retryOf = reply.retryOf ?? body.retry;
+        const requestMessage = messages[retryOf - 1];
+        if (requestMessage?.role !== 'user') throw new HttpError(400, '找不到原本的提問。');
+        selection = messages[retryOf].rewrite;
+        userText = requestMessage.content;
+        if (!selection && userText.startsWith('改寫選取文字：')) {
+            throw new HttpError(409, '請重新選取文字後再改寫。');
+        }
+    }
+    if (selection !== undefined) {
+        const { index, start, end, instruction } = selection || {};
         const original = Number.isInteger(index) && messages[index];
         try {
-            rewrite = prepareRewrite(original?.role === 'assistant' ? original.content : undefined, body.rewrite);
+            rewrite = prepareRewrite(original?.role === 'assistant' ? original.content : undefined, selection);
         } catch (error) {
             throw new HttpError(400, error.message);
         }
-        userText = `改寫選取文字：${body.rewrite.instruction.trim()}`;
-    } else if (typeof body.text === 'string' && body.text.trim() && body.text.length <= 8000) {
+        selection = { index, start, end, instruction: instruction.trim() };
+        userText = `改寫選取文字：${selection.instruction}`;
+    } else if (retryOf === undefined && typeof body.text === 'string' && body.text.trim() && body.text.length <= 8000) {
         userText = body.text.trim();
-    } else {
+    } else if (retryOf === undefined) {
         throw new HttpError(400, '請輸入 1 到 8,000 字的訊息。');
     }
     await cleanExpired(db, now);
@@ -308,7 +325,7 @@ async function chatRoute(request, env, path, owner, now) {
     const prompt = rewrite ? [
         { role: 'system', content: [system, rewriteDirective].filter(Boolean).join('\n\n') },
         { role: 'user', content: rewrite.prompt },
-    ] : history.slice(-12);
+    ] : (retryOf === undefined ? history : messages.slice(0, retryOf)).slice(-12);
     if (!rewrite && system) prompt.unshift({ role: 'system', content: system });
     const replacement = rewrite && { before: rewrite.before, after: rewrite.after };
     const job = crypto.randomUUID();
@@ -317,7 +334,8 @@ async function chatRoute(request, env, path, owner, now) {
             SELECT ?,owner,id,?,'chat',?,?,? FROM approvals WHERE id=? AND owner=? AND state='ready' AND expires>?
             AND EXISTS (SELECT 1 FROM chats WHERE id=? AND owner=? AND messages=?)
             ON CONFLICT DO NOTHING`)
-            .bind(job, id, JSON.stringify({ title, history, messages: prompt, parameters: settings.parameters, rewrite: replacement }), now,
+            .bind(job, id, JSON.stringify({ title, history, messages: prompt, parameters: settings.parameters,
+                rewrite: replacement, selection, retryOf }), now,
                 now + jobWindow, approval.id, owner, now, id, owner, chat.messages),
         db.prepare(`UPDATE approvals SET expires=MAX(expires,?) WHERE id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=?)`)
             .bind(now + activityWindow, approval.id, job),

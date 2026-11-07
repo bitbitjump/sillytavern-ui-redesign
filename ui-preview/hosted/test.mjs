@@ -193,6 +193,23 @@ try {
     const rewritten = await (await call(chatPath, alice)).json();
     assert.equal(rewritten.messages[3].content, original);
     assert.equal(rewritten.messages.at(-1).content, '前文 🐉\n\n  新段落\n    第二行\n後文\t。');
+    assert.deepEqual(rewritten.messages.at(-1).rewrite, rewrite);
+    assert.equal((await call(chatPath, { ...alice, body: { retry: 0 } })).status, 400);
+    assert.equal((await call(chatPath, { ...bob, body: { retry: 5 } })).status, 404);
+    assert.equal((await call(chatPath, { ...alice, body: { retry: 5 } })).status, 202);
+    upstreamReply = '再寫一版';
+    await mac.step();
+    const retriedRewrite = await (await call(chatPath, alice)).json();
+    assert.deepEqual(retriedRewrite.messages.slice(0, 6), rewritten.messages);
+    assert.equal(retriedRewrite.messages.at(-1).content, '前文 🐉\n\n  再寫一版\n後文\t。');
+    assert.equal(retriedRewrite.messages.at(-1).retryOf, 5);
+    assert.equal((await call(chatPath, { ...alice, body: { retry: 1 } })).status, 202);
+    upstreamReply = '新回覆';
+    await mac.step();
+    assert.equal(upstreamRequest.messages.at(-1).content, 'Alice private test');
+    const retriedChat = await (await call(chatPath, alice)).json();
+    assert.equal(retriedChat.messages[1].content, 'model answer');
+    assert.equal(retriedChat.messages.at(-1).content, '新回覆');
 
     db.prepare('UPDATE approvals SET expires=0 WHERE id=?').bind(approval.id).run();
     assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'expired');

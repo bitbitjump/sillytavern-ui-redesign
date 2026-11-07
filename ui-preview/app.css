@@ -208,8 +208,9 @@
   background: var(--surface);
   color: var(--text);
 }
-.message-actions > .rewrite-reply:disabled { opacity: .55; cursor: default; background: transparent; }
-.message-actions > :is(.copy-reply, .rewrite-reply) span { display: inline; }
+.message-actions > :is(.copy-reply, .rewrite-reply, .retry-reply) span { display: inline; }
+.rewrite-range { display: grid; gap: 10px; }
+.rewrite-range select { min-width: 0; }
 .rewrite-excerpt {
   max-height: 160px;
   overflow: auto;
@@ -377,4 +378,16 @@
 .app-shell.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)}.sidebar-collapsed .sidebar{width:0;opacity:0;pointer-events:none}.sidebar-collapsed .sidebar__open{visibility:visible}
 @media(max-width:940px){.app-shell{display:block}.workspace{width:100%}.sidebar{position:fixed;top:0;left:0;width:min(310px,88vw);transform:translateX(-102%);opacity:1;box-shadow:18px 0 55px rgba(0,0,0,.34);pointer-events:auto}.sidebar__open{visibility:visible}.sidebar-open .sidebar{transform:translateX(0)}.sidebar-open .scrim{visibility:visible;opacity:1}.sidebar-collapsed .sidebar{width:min(310px,88vw);opacity:1}.topbar{padding:0 10px}.conversation{padding-right:max(18px,calc((100% - 760px)/2));padding-left:max(18px,calc((100% - 760px)/2))}.composer-wrap{padding-right:max(12px,calc((100% - 790px)/2));padding-left:max(12px,calc((100% - 790px)/2))}}
 @media(max-width:640px){:root{--th:54px}.topbar{grid-template-columns:1fr auto 1fr}.connection-status{display:none}.model-selector{max-width:44vw}.model-selector span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.conversation{padding-top:28px;padding-right:14px;padding-left:14px;padding-bottom:72px}.conversation__intro{margin-bottom:30px}.conversation__intro h1{font-size:17px}.message{margin-bottom:30px}.message--user .message__body{max-width:90%}.message__body{font-size:14px;line-height:1.78}.message--assistant .message__body,.message--assistant .message-actions{padding-left:0}.message-actions{opacity:.72}.message-actions span{display:none}.composer-wrap{padding:6px 8px max(8px,env(safe-area-inset-bottom))}.composer{border-radius:16px}.composer__meta{display:none}.composer__main{min-height:56px}}
+.app-shell { min-height: 0; }
+@media (max-width: 940px), (pointer: coarse) {
+  .utility-panel[data-view="rewrite"] {
+    top: var(--visible-top, 0px);
+    bottom: var(--visible-bottom, 0px);
+    max-height: min(600px, calc(var(--visible-height, 100dvh) - 24px));
+  }
+  .utility-panel[data-view="rewrite"] :is(select, textarea) { font-size: 16px; }
+  .utility-panel[data-view="rewrite"] button[type="submit"] { min-height: 44px; }
+  .rewrite-excerpt { max-height: 100px; }
+  .message-actions > :is(.copy-reply, .rewrite-reply, .retry-reply) { min-height: 44px; }
+}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important}}

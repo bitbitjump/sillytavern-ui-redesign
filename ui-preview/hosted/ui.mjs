@@ -24,6 +24,7 @@ async function api(path, body) {
 
 export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount }) {
     const input = $('#message-input');
+    const conversation = $('#conversation');
     const send = $('#send-button');
     const dialog = $('#utility-panel');
     const panelContent = $('#panel-content');
@@ -96,7 +97,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         queueMicrotask(refreshStatus);
     }
 
-    function renderRoom() {
+    function renderRoom(showNewest = false) {
         $('#chat-title').textContent = room.title;
         $$('#conversation .message').forEach(message => message.remove());
         $$('.chat-row').forEach(row => row.classList.toggle('is-active', row.dataset.chatId === room.id));
@@ -106,11 +107,21 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             article.querySelector('[data-action="edit"]')?.remove();
             const author = article.querySelector('.message__identity strong');
             if (author) author.textContent = status.model;
+            if (message.rewrite) article.querySelector('.message__identity small').textContent = '改寫後全文';
+            if (message.role === 'assistant' && !message.rewrite
+                && room.messages[index - 1]?.content.startsWith('改寫選取文字：')) {
+                article.dataset.legacyRewrite = room.messages[index - 1].content.slice('改寫選取文字：'.length);
+            }
         }
         input.value = room.draft;
         resizeInput();
         input.readOnly = send.disabled = !!room.busy;
         chatStatus.textContent = room.notice;
+        const newest = showNewest && conversation.querySelector('.message--assistant:last-of-type');
+        const top = newest
+            ? conversation.scrollTop + newest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 12
+            : conversation.scrollHeight;
+        conversation.scrollTo({ top, behavior: 'instant' });
     }
 
     function activateRoom(next) {
@@ -199,8 +210,9 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
 
     async function queueMessage(payload) {
         const rewriting = Object.hasOwn(payload, 'rewrite');
+        const retrying = Object.hasOwn(payload, 'retry');
         if (room.busy || room.saving || !status) {
-            if (rewriting) chatStatus.textContent = '請等目前的操作完成後再改寫。';
+            if (rewriting || retrying) chatStatus.textContent = '請等目前的操作完成後再試。';
             return;
         }
         const target = room;
@@ -208,10 +220,11 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         target.draft = input.value;
         send.disabled = true;
         input.readOnly = true;
+        let completed = false;
         try {
             status = await api('/status');
             if (status.approval?.state !== 'ready') {
-                if (rewriting) target.notice = '請先取得模型使用權，再送出改寫要求。';
+                if (rewriting || retrying) target.notice = '請先取得模型使用權，再試一次。';
                 if (target === room) openPanel('models');
                 return;
             }
@@ -222,7 +235,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             }
             const path = `/chats/${target.id}`;
             const { job } = await api(path, payload);
-            target.notice = rewriting ? '模型正在改寫選取文字…' : '模型正在處理…';
+            target.notice = rewriting ? '模型正在改寫選取文字…' : retrying ? '模型正在重新回覆…' : '模型正在處理…';
             if (target === room) chatStatus.textContent = target.notice;
             const deadline = Date.now() + 305_000;
             while (Date.now() < deadline) {
@@ -233,8 +246,9 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
                 if (chat.job.state !== 'done') continue;
                 target.title = chat.title;
                 target.messages = chat.messages;
-                if (!rewriting) target.draft = '';
+                if (!rewriting && !retrying) target.draft = '';
                 target.notice = '';
+                completed = true;
                 await refreshChats();
                 return;
             }
@@ -243,7 +257,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             target.notice = error.message;
         } finally {
             target.busy = false;
-            if (target === room) renderRoom();
+            if (target === room) renderRoom(completed && (rewriting || retrying));
         }
     }
 
@@ -284,5 +298,6 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
     return { init, modelPanel, newChat, getSettings, saveSettings,
         sendMessage: text => queueMessage({ text }),
         rewriteMessage: rewrite => queueMessage({ rewrite }),
+        retryMessage: retry => queueMessage({ retry }),
         saveAccountPreferences: preferences => api('/account', preferences) };
 }
