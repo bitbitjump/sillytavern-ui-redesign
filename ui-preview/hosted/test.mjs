@@ -50,6 +50,7 @@ let running = false;
 let sleeping = false;
 let starts = 0;
 let upstreamRequest;
+let upstreamReply = 'model answer';
 const config = validateConnectorConfig({ site, modelUrl, model, token, startScript: process.cwd() });
 const mac = createConnector(config, {
     launch: async () => { starts++; running = true; },
@@ -64,7 +65,7 @@ const mac = createConnector(config, {
         assert.ok(url.endsWith('/v1/chat/completions'));
         sleeping = false;
         upstreamRequest = JSON.parse(options.body);
-        return Response.json({ choices: [{ message: { content: 'model answer' } }] });
+        return Response.json({ choices: [{ message: { content: upstreamReply } }] });
     },
 });
 
@@ -173,6 +174,25 @@ try {
     assert.deepEqual(await (await call('/api/tavern/chats', bob)).json(), { chats: [] });
     assert.equal((await call(chatPath, bob)).status, 404);
     assert.equal((await (await call('/api/tavern/status', bob)).json()).approval, null);
+
+    const original = '前文 🐉\n\n  只改這句\n後文\t。';
+    upstreamReply = original;
+    assert.equal((await call(chatPath, { ...alice, body: { text: '請再寫一段' } })).status, 202);
+    await mac.step();
+    const start = original.indexOf('只改這句');
+    const rewrite = { index: 3, start, end: start + '只改這句'.length, instruction: '改成兩行' };
+    assert.equal((await call(chatPath, { ...bob, body: { rewrite } })).status, 404);
+    assert.equal((await call(chatPath, { ...alice, body: { rewrite: { ...rewrite, index: 2 } } })).status, 400);
+    assert.equal((await call(chatPath, { ...alice, body: { rewrite: { ...rewrite, end: 500 } } })).status, 400);
+    assert.equal((await call(chatPath, { ...alice, body: { rewrite } })).status, 202);
+    upstreamReply = '新段落\n    第二行';
+    await mac.step();
+    assert.deepEqual(JSON.parse(upstreamRequest.messages.at(-1).content), {
+        instruction: '改成兩行', selected: '只改這句', before: '前文 🐉\n\n  ', after: '\n後文\t。',
+    });
+    const rewritten = await (await call(chatPath, alice)).json();
+    assert.equal(rewritten.messages[3].content, original);
+    assert.equal(rewritten.messages.at(-1).content, '前文 🐉\n\n  新段落\n    第二行\n後文\t。');
 
     db.prepare('UPDATE approvals SET expires=0 WHERE id=?').bind(approval.id).run();
     assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'expired');

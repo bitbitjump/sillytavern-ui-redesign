@@ -201,6 +201,26 @@
 }
 .chat-status:empty { display: none; }
 .chat-row[hidden], .message-actions[hidden], .version-switch[hidden] { display: none; }
+.message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.message--assistant .message-actions { opacity: 1; flex-wrap: wrap; }
+.message-actions > .copy-reply {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+.message-actions > .rewrite-reply:disabled { opacity: .55; cursor: default; background: transparent; }
+.message-actions > :is(.copy-reply, .rewrite-reply) span { display: inline; }
+.rewrite-excerpt {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--accent);
+  background: var(--surface);
+  color: var(--muted2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .generation-form { display: grid; gap: 16px; }
 .room-settings-note { margin: 0; color: var(--muted2); font-size: 12px; }
 #chat-settings-form { margin-bottom: 26px; }

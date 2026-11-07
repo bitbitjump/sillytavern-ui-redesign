@@ -22,7 +22,7 @@ async function api(path, body) {
     return data;
 }
 
-export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount }) {
+export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount }) {
     const input = $('#message-input');
     const send = $('#send-button');
     const dialog = $('#utility-panel');
@@ -100,9 +100,9 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         $('#chat-title').textContent = room.title;
         $$('#conversation .message').forEach(message => message.remove());
         $$('.chat-row').forEach(row => row.classList.toggle('is-active', row.dataset.chatId === room.id));
-        for (const message of room.messages) {
+        for (const [index, message] of room.messages.entries()) {
             const article = addMessage(message.content, message.role);
-            article.querySelector('.message__body').innerHTML = `<p>${escapeHtml(message.content).replace(/\n/g, '<br>')}</p>`;
+            article.dataset.messageIndex = String(index);
             article.querySelector('[data-action="edit"]')?.remove();
             const author = article.querySelector('.message__identity strong');
             if (author) author.textContent = status.model;
@@ -197,8 +197,12 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         }
     }
 
-    async function sendMessage(text) {
-        if (room.busy || room.saving || !status) return;
+    async function queueMessage(payload) {
+        const rewriting = Object.hasOwn(payload, 'rewrite');
+        if (room.busy || room.saving || !status) {
+            if (rewriting) chatStatus.textContent = '請等目前的操作完成後再改寫。';
+            return;
+        }
         const target = room;
         target.busy = true;
         target.draft = input.value;
@@ -207,6 +211,7 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         try {
             status = await api('/status');
             if (status.approval?.state !== 'ready') {
+                if (rewriting) target.notice = '請先取得模型使用權，再送出改寫要求。';
                 if (target === room) openPanel('models');
                 return;
             }
@@ -216,8 +221,8 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
                 await refreshChats();
             }
             const path = `/chats/${target.id}`;
-            const { job } = await api(path, { text });
-            target.notice = '模型正在處理…';
+            const { job } = await api(path, payload);
+            target.notice = rewriting ? '模型正在改寫選取文字…' : '模型正在處理…';
             if (target === room) chatStatus.textContent = target.notice;
             const deadline = Date.now() + 305_000;
             while (Date.now() < deadline) {
@@ -228,7 +233,7 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
                 if (chat.job.state !== 'done') continue;
                 target.title = chat.title;
                 target.messages = chat.messages;
-                target.draft = '';
+                if (!rewriting) target.draft = '';
                 target.notice = '';
                 await refreshChats();
                 return;
@@ -276,6 +281,8 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         }
     }
 
-    return { init, modelPanel, newChat, sendMessage, getSettings, saveSettings,
+    return { init, modelPanel, newChat, getSettings, saveSettings,
+        sendMessage: text => queueMessage({ text }),
+        rewriteMessage: rewrite => queueMessage({ rewrite }),
         saveAccountPreferences: preferences => api('/account', preferences) };
 }

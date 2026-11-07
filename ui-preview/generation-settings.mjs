@@ -55,3 +55,26 @@ export function chatSystemMessage(style, context = {}) {
   if (replyStyles[style].instruction) parts.push(replyStyles[style].instruction);
   return parts.join('\n\n');
 }
+
+export const rewriteInstructionLimit = 1000;
+export const rewriteDirective = '依照改寫要求，只改寫 selected 欄位。before 和 after 是參考上下文。只輸出改寫後的片段，直接寫正文。';
+
+export function prepareRewrite(source, selection) {
+  const { start, end, instruction } = selection || {};
+  if (typeof source !== 'string' || !Number.isInteger(start) || !Number.isInteger(end)
+    || start < 0 || end > source.length || start >= end || !source.slice(start, end).trim()) {
+    throw new Error('請重新選取同一則回覆中的文字。');
+  }
+  if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > rewriteInstructionLimit) {
+    throw new Error(`請輸入 1 到 ${rewriteInstructionLimit} 字元的改寫要求。`);
+  }
+  const before = source.slice(0, start);
+  const after = source.slice(end);
+  const prompt = JSON.stringify({
+    instruction: instruction.trim(),
+    selected: source.slice(start, end),
+    before: before.slice(-1200),
+    after: after.slice(0, 1200),
+  });
+  return { before, after, prompt };
+}

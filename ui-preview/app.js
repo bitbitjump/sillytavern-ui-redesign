@@ -1,4 +1,4 @@
-import { chatContextLimit, generationParameters, replyStyles, validateChatContext, validateGenerationSettings } from './generation-settings.mjs';
+import { chatContextLimit, generationParameters, replyStyles, rewriteInstructionLimit, validateChatContext, validateGenerationSettings } from './generation-settings.mjs';
 
 (() => {
   'use strict';
@@ -28,6 +28,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
   let localModel;
   let generating = false;
   let activeChat;
+  let selectedReply;
   const hosted = document.body.hasAttribute('data-hosted');
   let hostedUi;
   let accountProfile = {};
@@ -215,14 +216,14 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     return messages;
   }
 
-  async function runLocalGeneration(messages, onReply) {
+  async function runLocalGeneration(messages, onReply, rewrite) {
     if (generating) return;
     generating = true;
     input.readOnly = true;
     sendButton.disabled = true;
     chatStatus.textContent = '正在等待模型回覆…';
     try {
-      const result = await modelApi('/chat', { messages, ...roomSettings() });
+      const result = await modelApi('/chat', { messages, ...roomSettings(), rewrite });
       onReply(result.content);
       chatStatus.textContent = '';
       return true;
@@ -251,6 +252,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
         <button class="panel-card" type="button" data-select-model="新增模型連線"><span class="panel-card__icon"><i class="fa-solid fa-plug"></i></span><span><strong>新增模型連線</strong><small>OpenAI 相容 API、Ollama 或自訂端點</small></span><i class="fa-solid fa-chevron-right"></i></button>
       </div></section><p class="panel-note">這個公開展示站不保存 API 金鑰。實際串接會放在本機／伺服器端設定，避免把私人連線資訊送到前端。</p>`],
     generation: ['這個聊天', '語氣與生成參數'],
+    rewrite: ['這則回覆', '改寫選取文字'],
     account: ['個人', '帳號設定'],
     appearance: ['個人', '外觀設定'],
     settings: ['這個聊天', '聊天設定', `
@@ -544,7 +546,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     };
   }
 
-  function openPanel(kind) {
+  function openPanel(kind, rewriteSelection) {
     if (panel.open) return;
     const focusPrompt = kind === 'prompt';
     if (focusPrompt) kind = 'settings';
@@ -559,6 +561,8 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
       renderGenerationSettings();
     } else if (kind === 'settings') {
       renderChatSettings();
+    } else if (kind === 'rewrite') {
+      renderRewriteForm(rewriteSelection);
     } else if (kind === 'account') {
       renderAccountSettings();
     } else if (kind === 'appearance') {
@@ -595,6 +599,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     panel.showModal();
     panelContent.scrollTop = 0;
     if (focusPrompt) $('textarea[name="systemPrompt"]', panelContent).focus();
+    if (kind === 'rewrite') $('textarea[name="instruction"]', panelContent).focus();
   }
   function closePanel() { panel.close(); }
   panel.addEventListener('close', () => {
@@ -623,29 +628,101 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     shell.classList.remove('sidebar-open');
   }
   function resizeInput() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`; }
-  function escapeHtml(value) { const el = document.createElement('div'); el.textContent = value; return el.innerHTML; }
-  function messageText(article) { return $('.message__body', article)?.innerText.trim() || ''; }
+  function setMessageText(body, text) {
+    const paragraph = document.createElement('p');
+    paragraph.className = 'message__text';
+    paragraph.textContent = text;
+    body.replaceChildren(paragraph);
+  }
+  function messageText(article) {
+    return $('.message__text', article)?.textContent ?? $('.message__body', article)?.innerText.trim() ?? '';
+  }
 
   async function copyMessage(article) {
-    try { await navigator.clipboard.writeText(messageText(article)); showToast('已複製訊息'); }
+    try { await navigator.clipboard.writeText(messageText(article)); showToast('已複製到剪貼簿'); }
     catch { showToast('瀏覽器未允許複製'); }
   }
+
+  function readReplySelection() {
+    const selection = document.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    const startNode = range.startContainer;
+    const element = startNode instanceof Element ? startNode : startNode.parentElement;
+    const body = element?.closest('.message--assistant .message__body');
+    if (!body?.contains(range.endContainer)) return null;
+    const paragraph = $('.message__text', body);
+    if (!paragraph) return null;
+    const article = body.closest('.message');
+    const button = $('[data-action="rewrite"]', article);
+    const text = range.toString();
+    if (!button || !text.trim()) return null;
+    const prefix = document.createRange();
+    prefix.selectNodeContents(paragraph);
+    prefix.setEnd(startNode, range.startOffset);
+    const start = prefix.toString().length;
+    return { article, button, text, start, end: start + text.length };
+  }
+
+  function renderRewriteForm({ article, text, start, end }) {
+    panelContent.innerHTML = `
+      <form class="generation-form">
+        <blockquote class="rewrite-excerpt"></blockquote>
+        <label class="generation-field">
+          <span>想怎麼改？</span>
+          <textarea name="instruction" rows="3" maxlength="${rewriteInstructionLimit}" required placeholder="例如：把選取的台詞改得更自然。"></textarea>
+        </label>
+        <div class="generation-actions"><button type="submit">產出完整新版</button></div>
+      </form>`;
+    $('.rewrite-excerpt', panelContent).textContent = text;
+    $('form', panelContent).onsubmit = event => {
+      event.preventDefault();
+      const instruction = new FormData(event.currentTarget).get('instruction').trim();
+      if (!instruction) {
+        panelStatus.textContent = '請輸入改寫要求。';
+        return;
+      }
+      closePanel();
+      const range = { start, end, instruction };
+      if (hosted) {
+        hostedUi.rewriteMessage({ ...range, index: Number(article.dataset.messageIndex) });
+      } else {
+        const request = { role: 'user', content: `改寫選取文字：${instruction}` };
+        runLocalGeneration([request], reply => {
+          addMessage(request.content, 'user');
+          addMessage(reply, 'assistant');
+        }, { ...range, source: messageText(article) });
+      }
+    };
+  }
+
+  document.addEventListener('selectionchange', () => {
+    const next = readReplySelection();
+    if (selectedReply && selectedReply.button !== next?.button) selectedReply.button.disabled = true;
+    if (next) next.button.disabled = false;
+    selectedReply = next;
+  });
+  conversation.addEventListener('pointerdown', event => {
+    if (event.target.closest('[data-action="rewrite"]')) event.preventDefault();
+  });
+
   function editMessage(article) {
     if (generating || $('.message-editor', article)) return;
-    const body = $('.message__body', article); const actions = $('.message-actions', article); const original = body.innerText.trim();
+    const body = $('.message__body', article); const actions = $('.message-actions', article); const original = messageText(article);
     body.hidden = true; actions.hidden = true;
     const editor = document.createElement('div');
     editor.innerHTML = '<textarea class="message-editor" aria-label="編輯訊息"></textarea><div class="edit-controls"><button class="cancel-edit" type="button">取消</button><button class="save-edit" type="button">儲存並送出</button></div>';
     $('.message-editor', editor).value = original; article.insertBefore(editor, actions); $('.message-editor', editor).focus();
     if (localModel) $('.save-edit', editor).textContent = '儲存修改';
     $('.cancel-edit', editor).onclick = () => { editor.remove(); body.hidden = false; actions.hidden = false; };
-    $('.save-edit', editor).onclick = () => { const value = $('.message-editor', editor).value.trim(); if (!value) return; body.innerHTML = `<p>${escapeHtml(value).replace(/\n/g, '<br>')}</p>`; editor.remove(); body.hidden = false; actions.hidden = false; showToast('已更新訊息，舊回覆仍保留'); };
+    $('.save-edit', editor).onclick = () => { const value = $('.message-editor', editor).value.trim(); if (!value) return; setMessageText(body, value); editor.remove(); body.hidden = false; actions.hidden = false; showToast('已更新訊息，舊回覆仍保留'); };
   }
   function regenerate(article) {
-    const content = $('.version-content', article); const list = versions.get(article) || [content.innerHTML];
+    const content = $('.version-content', article);
+    const list = versions.get(article) || [localModel ? { text: messageText(article) } : { html: content.innerHTML }];
     if (localModel) {
       runLocalGeneration(chatContext(article), reply => {
-        list.push(`<p>${escapeHtml(reply).replace(/\n/g, '<br>')}</p>`);
+        list.push({ text: reply });
         versions.set(article, list);
         article.dataset.version = String(list.length - 1);
         renderVersion(article);
@@ -656,23 +733,31 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
       '<p>已記住。這一次，門上的鈴沒有立刻響。</p><p>周澈把藍傘靠在門邊，水珠沿著傘骨慢慢墜落。他看著林岑，像是在等一句遲了五年的話。林岑只把熱茶推過去，指尖在杯緣停了一下。</p><blockquote>「先坐吧，雨一時不會停。」</blockquote><p>於是周澈坐下，而雨替他們把沉默說完。</p>',
       '<p>書店裡仍留著舊紙張與雨水混在一起的氣味。</p><p>林岑沒有問他為什麼回來，只從櫃檯下拿出一條乾毛巾。周澈接過時笑得很輕，藍傘在腳邊滴出一圈小小的水痕。</p><blockquote>「你還留著那盞燈。」</blockquote><p>林岑望向窗邊：「怕有人找不到路。」</p>'
     ];
-    list.push(options[(list.length - 1) % options.length]); versions.set(article, list); article.dataset.version = String(list.length - 1); renderVersion(article); showToast('已產生新版本，之前的回覆仍可切換');
+    list.push({ html: options[(list.length - 1) % options.length] }); versions.set(article, list); article.dataset.version = String(list.length - 1); renderVersion(article); showToast('已產生新版本，之前的回覆仍可切換');
   }
   function renderVersion(article) {
     const list = versions.get(article); if (!list) return;
     let index = Math.max(0, Math.min(Number(article.dataset.version || 0), list.length - 1)); article.dataset.version = String(index);
-    $('.version-content', article).innerHTML = list[index]; const switcher = $('.version-switch', article); switcher.hidden = list.length < 2;
+    const content = $('.version-content', article);
+    const version = list[index];
+    if (Object.hasOwn(version, 'text')) setMessageText(content, version.text);
+    else content.innerHTML = version.html;
+    const switcher = $('.version-switch', article); switcher.hidden = list.length < 2;
     $('.version-label', switcher).textContent = `${index + 1} / ${list.length}`; $('[data-version-nav="prev"]', switcher).disabled = index === 0; $('[data-version-nav="next"]', switcher).disabled = index === list.length - 1;
   }
   function addMessage(text, who, targetChat = activeChat) {
     const article = document.createElement('article'); article.className = `message message--${who}`;
     article.innerHTML = who === 'user'
-      ? `<div class="message__body"><p>${escapeHtml(text).replace(/\n/g, '<br>')}</p></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button><button type="button" data-action="edit"><i class="fa-solid fa-pen"></i><span>編輯</span></button></div>`
-      : `<div class="message__identity"><div class="assistant-avatar assistant-avatar--small"><i class="fa-solid fa-feather-pointed"></i></div><div><strong>書店寫作助手</strong><small>剛剛</small></div></div><div class="message__body"><p>${escapeHtml(text)}</p></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button></div>`;
+      ? '<div class="message__body"></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button><button type="button" data-action="edit"><i class="fa-solid fa-pen"></i><span>編輯</span></button></div>'
+      : '<div class="message__identity"><div class="assistant-avatar assistant-avatar--small"><i class="fa-solid fa-feather-pointed"></i></div><div><strong>書店寫作助手</strong><small>剛剛</small></div></div><div class="message__body"></div><div class="message-actions"><button class="copy-reply" type="button" data-action="copy"><i class="fa-solid fa-copy" aria-hidden="true"></i><span>複製全文</span></button></div>';
+    const body = $('.message__body', article);
+    setMessageText(body, text);
+    if (who === 'assistant' && (localModel || hosted)) {
+      $('.message-actions', article).insertAdjacentHTML('beforeend',
+        '<button class="rewrite-reply" type="button" data-action="rewrite" disabled><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>改寫選取文字</span></button>');
+    }
     if (localModel && who === 'assistant') {
-      const body = $('.message__body', article);
       body.classList.add('version-content');
-      body.innerHTML = `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`;
       $('.message__identity strong', article).textContent = localModel.model;
       $('.message-actions', article).insertAdjacentHTML('beforeend', `
         <button type="button" data-action="regenerate" title="重新回覆"><i class="fa-solid fa-rotate-right"></i><span>重新回覆</span></button>
@@ -694,7 +779,14 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
   $('#sidebar-open').onclick = openSidebar; $('#sidebar-close').onclick = closeSidebar; $('#panel-close').onclick = closePanel; $('#scrim').onclick = closeFloatingSidebar;
   document.addEventListener('click', (event) => {
     const opener = event.target.closest('[data-panel]'); if (opener) openPanel(opener.dataset.panel);
-    const action = event.target.closest('[data-action]'); if (action) { const article = action.closest('.message'); if (action.dataset.action === 'copy') copyMessage(article); if (action.dataset.action === 'edit') editMessage(article); if (action.dataset.action === 'regenerate') regenerate(article); }
+    const action = event.target.closest('[data-action]');
+    if (action) {
+      const article = action.closest('.message');
+      if (action.dataset.action === 'copy') copyMessage(article);
+      if (action.dataset.action === 'edit') editMessage(article);
+      if (action.dataset.action === 'regenerate') regenerate(article);
+      if (action.dataset.action === 'rewrite' && selectedReply?.article === article) openPanel('rewrite', selectedReply);
+    }
     const nav = event.target.closest('[data-version-nav]'); if (nav) { const article = nav.closest('.message'); article.dataset.version = String(Number(article.dataset.version || 0) + (nav.dataset.versionNav === 'prev' ? -1 : 1)); renderVersion(article); }
     const role = event.target.closest('[data-select-role]');
     if (role) {
@@ -780,7 +872,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
   });
   if (hosted) {
     import('./hosted/ui.mjs').then(({ createHostedUi }) => {
-      hostedUi = createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
+      hostedUi = createHostedUi({ addMessage, resizeInput, openPanel,
         closeFloatingSidebar, isNarrow, renderAccount });
       return hostedUi.init();
     }).catch(() => { chatStatus.textContent = '網站聊天模組無法載入。'; });

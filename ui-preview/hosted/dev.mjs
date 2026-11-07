@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createLocalDb } from './sqlite.mjs';
 import { createConnector } from './connector.mjs';
 import worker from './worker.mjs';
+import { rewriteDirective } from '../generation-settings.mjs';
 
 const port = Number(process.env.TAVERN_DEV_PORT || 8121);
 const origin = `http://127.0.0.1:${port}`;
@@ -127,7 +128,17 @@ const connector = createConnector({ site: origin, model: 'f451-writer',
         if (target.pathname === '/props') return Response.json({ is_sleeping: false });
         if (target.pathname === '/v1/models') return Response.json({ data: [{ id: 'f451-writer' }] });
         const { messages } = JSON.parse(options.body);
-        return Response.json({ choices: [{ message: { content: `假模型回覆：${messages.at(-1).content}` } }] });
+        const input = messages.at(-1).content;
+        let content = `假模型回覆：${input}`;
+        if (messages[0]?.role === 'system' && messages[0].content.endsWith(rewriteDirective)) {
+            try {
+                const { selected } = JSON.parse(input);
+                if (typeof selected === 'string') content = `【模擬改寫】${selected}`;
+            } catch {
+                // A custom system prompt can also include the rewrite instruction.
+            }
+        }
+        return Response.json({ choices: [{ message: { content } }] });
     },
 });
 
