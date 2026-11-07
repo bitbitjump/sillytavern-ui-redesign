@@ -8,7 +8,7 @@
     <link href="../public/webfonts/NotoSans/stylesheet.css" rel="stylesheet">
     <link href="../public/css/fontawesome.min.css" rel="stylesheet">
     <link href="../public/css/solid.min.css" rel="stylesheet">
-    <link href="app.css?v=11" rel="stylesheet">
+    <link href="app.css?v=12" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell" id="app-shell">
@@ -39,11 +39,6 @@
                     <button class="chat-row" type="button" data-title="角色設定討論"><i class="fa-solid fa-mug-hot"></i><span>角色設定討論</span><i class="fa-solid fa-ellipsis row-more"></i></button>
                 </section>
             </nav>
-            <div class="sidebar__footer">
-                <button class="footer-action" type="button" data-panel="roles"><i class="fa-solid fa-user-group"></i><span>角色</span></button>
-                <button class="footer-action" type="button" data-panel="models"><i class="fa-solid fa-sliders"></i><span>模型</span></button>
-                <button class="footer-action" type="button" data-panel="tools"><i class="fa-solid fa-border-all"></i><span>工具</span></button>
-            </div>
         </aside>
         <button class="scrim" id="scrim" type="button" aria-label="關閉面板" tabindex="-1"></button>
         <main class="workspace">
@@ -52,7 +47,6 @@
                 <button class="model-selector" type="button" data-panel="models"><span id="current-model">Tavern Story 7B</span><i class="fa-solid fa-chevron-down"></i></button>
                 <div class="topbar__actions">
                     <span class="connection-status" id="connection-status"><i></i><span>展示模式</span></span>
-                    <button class="icon-button" type="button" data-panel="roles" aria-label="角色" title="角色"><i class="fa-solid fa-user-group"></i></button>
                     <button class="icon-button" type="button" data-panel="settings" aria-label="聊天設定" title="聊天設定"><i class="fa-solid fa-ellipsis"></i></button>
                 </div>
             </header>
@@ -85,11 +79,25 @@
             <footer class="composer-wrap">
                 <form class="composer" id="composer">
                     <div class="composer__main">
-                        <button class="attach-button" id="attach-button" type="button" aria-label="附加檔案與工具" title="附加檔案與工具"><i class="fa-solid fa-plus"></i></button>
+                        <button class="attach-button" id="composer-tools-toggle" type="button" popovertarget="composer-tools" aria-label="工具與生成設定" title="工具與生成設定">
+                            <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+                        </button>
+                        <div class="tool-picker" id="composer-tools" popover="auto" role="group" aria-label="工具與生成設定">
+                            <div class="tool-picker__group">
+                                <button type="button" data-panel="generation"><i class="fa-solid fa-sliders" aria-hidden="true"></i>語氣與生成參數</button>
+                                <button type="button" data-panel="roles"><i class="fa-solid fa-user-group" aria-hidden="true"></i>角色</button>
+                                <button type="button" data-panel="models"><i class="fa-solid fa-cube" aria-hidden="true"></i>模型</button>
+                            </div>
+                            <div class="tool-picker__group">
+                                <button type="button" data-tool="從電腦選擇檔案"><i class="fa-solid fa-paperclip" aria-hidden="true"></i>附加檔案</button>
+                                <button type="button" data-tool="開啟世界資訊"><i class="fa-solid fa-book-atlas" aria-hidden="true"></i>世界資訊</button>
+                                <button type="button" data-tool="開啟提示詞庫"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>提示詞與預設</button>
+                            </div>
+                        </div>
                         <textarea id="message-input" rows="1" placeholder="傳訊息給書店寫作助手" aria-label="訊息"></textarea>
                         <button class="send-button" id="send-button" type="submit" aria-label="傳送"><i class="fa-solid fa-arrow-up"></i></button>
                     </div>
-                    <div class="composer__meta"><div><button type="button" data-panel="tools"><i class="fa-solid fa-wand-magic-sparkles"></i> 工具</button><button type="button" data-panel="roles"><i class="fa-solid fa-feather"></i> 書店寫作助手</button></div><span>AI 可能會犯錯，請確認重要內容。</span></div>
+                    <div class="composer__meta">AI 可能會犯錯，請確認重要內容。</div>
                     <p id="chat-status" class="chat-status" role="status"></p>
                 </form>
             </footer>
@@ -101,6 +109,6 @@
         </dialog>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=11"></script>
+    <script type="module" src="app.js?v=12"></script>
 </body>
 </html>

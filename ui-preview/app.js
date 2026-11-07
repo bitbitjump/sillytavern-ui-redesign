@@ -10,6 +10,8 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   const panelEyebrow = $('#panel-eyebrow');
   const panelContent = $('#panel-content');
   const panelStatus = $('#panel-status');
+  const toolPicker = $('#composer-tools');
+  const toolToggle = $('#composer-tools-toggle');
   const conversation = $('#conversation');
   const composer = $('#composer');
   const input = $('#message-input');
@@ -88,7 +90,9 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       }
       try {
         localStorage.setItem(settingsKey, JSON.stringify(generation));
-        panelStatus.textContent = '已儲存。下次送出或重新回覆時套用。';
+        panelStatus.textContent = localModel?.mode === 'remote'
+          ? '已儲存。下次送出或重新回覆時套用。'
+          : '已儲存。連接模型後才會套用到回覆。';
       } catch {
         panelStatus.textContent = '這次開啟期間會套用。瀏覽器無法保存設定。';
       }
@@ -150,11 +154,6 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       return; // Standalone static preview.
     }
     $('#current-model').textContent = localModel.model;
-    loadGenerationSettings();
-    const settingsButton = $('[data-panel="settings"]');
-    settingsButton.setAttribute('aria-label', '生成設定');
-    settingsButton.title = '生成設定';
-    $('i', settingsButton).className = 'fa-solid fa-sliders';
     $('#connection-status span').textContent = localModel.mode === 'mock' ? '測試模式' : '模型模式';
     $('.conversation__intro p').textContent = localModel.mode === 'mock'
       ? '本機測試模式 · 回覆由測試後端產生'
@@ -212,12 +211,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
         <button class="panel-card is-selected" type="button" data-select-model="Tavern Story 7B"><span class="panel-card__icon"><i class="fa-solid fa-cube"></i></span><span><strong>Tavern Story 7B</strong><small>展示資料 · 尚未連接實際模型</small></span><i class="fa-solid fa-check"></i></button>
         <button class="panel-card" type="button" data-select-model="新增模型連線"><span class="panel-card__icon"><i class="fa-solid fa-plug"></i></span><span><strong>新增模型連線</strong><small>OpenAI 相容 API、Ollama 或自訂端點</small></span><i class="fa-solid fa-chevron-right"></i></button>
       </div></section><p class="panel-note">這個公開展示站不保存 API 金鑰。實際串接會放在本機／伺服器端設定，避免把私人連線資訊送到前端。</p>`],
-    tools: ['上下文與附件', '工具', `
-      <section class="panel-section"><h3>加入聊天</h3><div class="panel-list">
-        <button class="panel-card" type="button" data-tool="從電腦選擇檔案"><span class="panel-card__icon"><i class="fa-solid fa-paperclip"></i></span><span><strong>附加檔案</strong><small>PDF、文字、圖片與角色卡</small></span><i class="fa-solid fa-chevron-right"></i></button>
-        <button class="panel-card" type="button" data-tool="開啟世界資訊"><span class="panel-card__icon"><i class="fa-solid fa-book-atlas"></i></span><span><strong>世界資訊</strong><small>管理故事設定、地點與人物知識</small></span><i class="fa-solid fa-chevron-right"></i></button>
-        <button class="panel-card" type="button" data-tool="開啟提示詞庫"><span class="panel-card__icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span><span><strong>提示詞與預設</strong><small>套用常用指令與生成參數</small></span><i class="fa-solid fa-chevron-right"></i></button>
-      </div></section>`],
+    generation: ['回覆設定', '語氣與生成參數'],
     settings: ['這個聊天', '聊天設定', `
       <section class="panel-section"><h3>回覆偏好</h3>
         <div class="toggle-row"><span>串流顯示回覆</span><button class="switch is-on" type="button" aria-label="切換串流顯示"></button></div>
@@ -243,14 +237,32 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     shell.classList.remove('sidebar-open');
     if (!isNarrow()) shell.classList.add('sidebar-collapsed');
   }
+  function positionToolPicker() {
+    const bounds = toolToggle.getBoundingClientRect();
+    const width = Math.min(264, window.innerWidth - 24);
+    toolPicker.style.left = `${Math.max(12, Math.min(bounds.left, window.innerWidth - width - 12))}px`;
+    toolPicker.style.bottom = `${window.innerHeight - bounds.top + 8}px`;
+    toolPicker.style.maxHeight = `${Math.max(0, bounds.top - 20)}px`;
+  }
+
+  function closeToolPicker() {
+    if (!toolPicker.matches(':popover-open')) return;
+    toolPicker.hidePopover();
+    toolToggle.focus({ preventScroll: true });
+  }
+
+  toolPicker.addEventListener('beforetoggle', event => {
+    if (event.newState === 'open') positionToolPicker();
+  });
+
   function openPanel(kind) {
     if (panel.open) return;
-    const data = panelData[kind] || panelData.tools;
+    const data = panelData[kind];
+    if (!data) return;
+    closeToolPicker();
     panelEyebrow.textContent = data[0];
     panelTitle.textContent = data[1];
-    if (kind === 'settings' && localModel) {
-      panelEyebrow.textContent = '回覆語氣與參數';
-      panelTitle.textContent = '生成設定';
+    if (kind === 'generation') {
       renderGenerationSettings();
     } else if (kind === 'models' && localModel) {
       panelContent.innerHTML = `
@@ -365,7 +377,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     conversation.appendChild(article); conversation.scrollTop = conversation.scrollHeight; return article;
   }
 
-  $('#sidebar-open').onclick = openSidebar; $('#sidebar-close').onclick = closeSidebar; $('#panel-close').onclick = closePanel; $('#attach-button').onclick = () => openPanel('tools'); $('#scrim').onclick = closeFloatingSidebar;
+  $('#sidebar-open').onclick = openSidebar; $('#sidebar-close').onclick = closeSidebar; $('#panel-close').onclick = closePanel; $('#scrim').onclick = closeFloatingSidebar;
   document.addEventListener('click', (event) => {
     const opener = event.target.closest('[data-panel]'); if (opener) openPanel(opener.dataset.panel);
     const action = event.target.closest('[data-action]'); if (action) { const article = action.closest('.message'); if (action.dataset.action === 'copy') copyMessage(article); if (action.dataset.action === 'edit') editMessage(article); if (action.dataset.action === 'regenerate') regenerate(article); }
@@ -383,7 +395,11 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       closePanel();
       showToast(`已選擇 ${model.dataset.selectModel}`);
     }
-    const tool = event.target.closest('[data-tool]'); if (tool) showToast(`${tool.dataset.tool}（互動展示）`);
+    const tool = event.target.closest('[data-tool]');
+    if (tool) {
+      closeToolPicker();
+      showToast(`${tool.dataset.tool}（互動展示）`);
+    }
     const toggle = event.target.closest('.switch'); if (toggle) toggle.classList.toggle('is-on');
   });
   $$('.chat-row').forEach(row => row.onclick = event => {
@@ -433,12 +449,16 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   };
   input.oninput = resizeInput; input.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); } };
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !panel.open) closeFloatingSidebar();
+    if (event.key === 'Escape' && !panel.open && !toolPicker.matches(':popover-open')) closeFloatingSidebar();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
       if (!panel.open) $('#new-chat').click();
     }
   });
-  addEventListener('resize', () => { if (!isNarrow()) shell.classList.remove('sidebar-open'); });
+  addEventListener('resize', () => {
+    if (!isNarrow()) shell.classList.remove('sidebar-open');
+    if (toolPicker.matches(':popover-open')) positionToolPicker();
+  });
+  loadGenerationSettings();
   initLocalModel();
 })();
