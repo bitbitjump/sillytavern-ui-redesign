@@ -97,6 +97,40 @@
 }
 .chat-status:empty { display: none; }
 .chat-row[hidden], .message-actions[hidden], .version-switch[hidden] { display: none; }
+.generation-form { display: grid; gap: 16px; }
+.generation-form fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.generation-form legend { padding: 0 6px; font-weight: 600; }
+.generation-form fieldset p, .generation-field small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.generation-form fieldset .generation-field { margin-top: 12px; }
+.generation-field { display: grid; gap: 5px; font-size: 14px; }
+.generation-field input, .generation-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.generation-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.generation-actions button {
+  padding: 8px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.generation-actions button[type="submit"] { background: var(--accent); color: var(--ink); }
 @media (max-width: 940px) {
   .sidebar-open .sidebar { pointer-events: auto; }
 }

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { replyStyles, validateGenerationSettings } from './generation-settings.mjs';
 
 const host = '127.0.0.1';
 const port = Number(process.env.TAVERN_PORT || 8120);
@@ -33,6 +34,7 @@ const resources = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.css', ['app.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/generation-settings.mjs', ['generation-settings.mjs', 'text/javascript; charset=utf-8']],
   ['/public/css/fontawesome.min.css', ['../public/css/fontawesome.min.css', 'text/css; charset=utf-8']],
   ['/public/css/solid.min.css', ['../public/css/solid.min.css', 'text/css; charset=utf-8']],
   ['/public/webfonts/fa-solid-900.woff2', ['../public/webfonts/fa-solid-900.woff2', 'font/woff2']],
@@ -85,7 +87,7 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-async function readMessages(request) {
+async function readChatRequest(request) {
   let size = 0;
   const chunks = [];
   for await (const chunk of request.iterator({ destroyOnReturn: false })) {
@@ -108,7 +110,16 @@ async function readMessages(request) {
     || body.messages.at(-1).role !== 'user') {
     throw new ApiError(400, '對話格式錯誤或超過 100 則訊息。');
   }
-  return body.messages.map(({ role, content }) => ({ role, content }));
+  let settings;
+  try {
+    settings = validateGenerationSettings(body.generation);
+  } catch (error) {
+    throw new ApiError(400, error.message);
+  }
+  const messages = body.messages.map(({ role, content }) => ({ role, content }));
+  const instruction = replyStyles[settings.style].instruction;
+  if (instruction) messages.unshift({ role: 'system', content: instruction });
+  return { messages, parameters: settings.parameters };
 }
 
 async function modelRequest(path, body) {
@@ -183,11 +194,11 @@ const server = createServer(async (request, response) => {
         return json(response, 200, { status: baseUrl ? '端點已連通，模型 ID 已確認。' : '測試模式正常，尚未連接外部模型。' });
       }
       if (path === '/api/local-model/chat') {
-        const messages = await readMessages(request);
+        const { messages, parameters } = await readChatRequest(request);
         if (!baseUrl) {
           return json(response, 200, { content: `測試模式（非模型生成）\n已收到：${messages.at(-1).content}` });
         }
-        const result = await modelRequest('/chat/completions', { model: modelId, messages, stream: false });
+        const result = await modelRequest('/chat/completions', { model: modelId, messages, stream: false, ...parameters });
         const content = result?.choices?.[0]?.message?.content;
         if (typeof content !== 'string' || !content.trim()) {
           throw new ApiError(502, '模型沒有回傳可顯示的文字。');

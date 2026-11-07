@@ -1,0 +1,34 @@
+export const replyStyles = {
+  default: { label: '預設', instruction: '' },
+  witty: { label: '風趣', instruction: '用自然、輕鬆、帶點幽默的語氣回覆。嚴肅話題請維持合宜語氣。' },
+  concise: { label: '簡潔', instruction: '用簡短清楚的語句回覆，優先提供重點。' },
+  narrative: { label: '敘事', instruction: '用細膩、有畫面感的語氣回覆，保留適當的感官細節與節奏。' },
+};
+
+export const generationParameters = [
+  { key: 'temperature', label: '隨機度（Temperature）', min: 0, max: 2, step: 'any', description: '越高越多變，越低越穩定。' },
+  { key: 'top_p', label: '取樣範圍（Top P）', min: 0, max: 1, step: 'any', description: '越低越傾向從常見選項取樣。' },
+  { key: 'max_tokens', label: '回覆長度上限（Tokens）', min: 1, max: 32768, step: 1, description: '限制每次生成的長度，單位是 token。' },
+  { key: 'frequency_penalty', label: '重複詞句懲罰', min: -2, max: 2, step: 'any', description: '提高數值可減少反覆使用相同詞句。' },
+  { key: 'presence_penalty', label: '已出現詞語懲罰', min: -2, max: 2, step: 'any', description: '提高數值可鼓勵模型使用尚未出現的詞語。' },
+];
+
+export function validateGenerationSettings(settings = {}) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('生成設定格式錯誤。');
+  }
+  const { style = 'default' } = settings;
+  if (typeof style !== 'string' || !Object.hasOwn(replyStyles, style)) {
+    throw new Error('回覆語氣選項無效。');
+  }
+  const parameters = {};
+  for (const { key, label, min, max, step } of generationParameters) {
+    if (!Object.hasOwn(settings, key)) continue;
+    const value = settings[key];
+    if (!Number.isFinite(value) || value < min || value > max || (step === 1 && !Number.isInteger(value))) {
+      throw new Error(`${label}請填寫 ${min} 到 ${max} 之間的${step === 1 ? '整數' : '數字'}。`);
+    }
+    parameters[key] = value;
+  }
+  return { style, parameters };
+}

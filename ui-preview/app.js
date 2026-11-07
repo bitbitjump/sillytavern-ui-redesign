@@ -1,3 +1,5 @@
+import { generationParameters, replyStyles, validateGenerationSettings } from './generation-settings.mjs';
+
 (() => {
   'use strict';
   const $ = (s, root = document) => root.querySelector(s);
@@ -21,6 +23,77 @@
   let localModel;
   let generating = false;
   let activeChat;
+  const settingsKey = 'tavern-generation-settings';
+  let generation = { style: 'default' };
+
+  function loadGenerationSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(settingsKey) || '{}');
+      const { style, parameters } = validateGenerationSettings(saved);
+      generation = { style, ...parameters };
+    } catch {
+      // Invalid or unavailable browser storage leaves the defaults in place.
+    }
+  }
+
+  function renderGenerationSettings() {
+    const options = Object.entries(replyStyles).map(([key, { label }]) =>
+      `<option value="${key}">${label}</option>`).join('');
+    const inputs = generationParameters.map(({ key, label, min, max, step, description }) => `
+      <label class="generation-field">
+        <span>${label}</span>
+        <input name="${key}" type="number" min="${min}" max="${max}" step="${step}" placeholder="模型預設">
+        <small>${description}</small>
+      </label>`).join('');
+    panelContent.innerHTML = `
+      <form class="generation-form">
+        <label class="generation-field">
+          <span>回覆語氣</span>
+          <select name="style">${options}</select>
+          <small>以提示詞引導回覆風格。</small>
+        </label>
+        <fieldset>
+          <legend>生成參數</legend>
+          <p>留白就沿用模型服務的預設值。只填模型支援的參數。</p>
+          ${inputs}
+        </fieldset>
+        <div class="generation-actions">
+          <button type="button" id="reset-generation">清空設定</button>
+          <button type="submit">儲存設定</button>
+        </div>
+      </form>`;
+    const form = $('.generation-form');
+    form.elements.namedItem('style').value = generation.style;
+    for (const { key } of generationParameters) {
+      form.elements.namedItem(key).value = generation[key] ?? '';
+    }
+    $('#reset-generation').onclick = () => {
+      form.reset();
+      panelStatus.textContent = '已清空欄位。按儲存設定套用。';
+    };
+    form.onsubmit = event => {
+      event.preventDefault();
+      const fields = new FormData(form);
+      const values = { style: fields.get('style') };
+      for (const { key } of generationParameters) {
+        const value = fields.get(key);
+        if (value !== '') values[key] = Number(value);
+      }
+      try {
+        const { style, parameters } = validateGenerationSettings(values);
+        generation = { style, ...parameters };
+      } catch (error) {
+        panelStatus.textContent = error.message;
+        return;
+      }
+      try {
+        localStorage.setItem(settingsKey, JSON.stringify(generation));
+        panelStatus.textContent = '已儲存。下次送出或重新回覆時套用。';
+      } catch {
+        panelStatus.textContent = '這次開啟期間會套用。瀏覽器無法保存設定。';
+      }
+    };
+  }
 
   async function modelApi(path, body) {
     const response = await fetch(`/api/local-model${path}`, body === undefined ? {} : {
@@ -77,6 +150,11 @@
       return; // Standalone static preview.
     }
     $('#current-model').textContent = localModel.model;
+    loadGenerationSettings();
+    const settingsButton = $('[data-panel="settings"]');
+    settingsButton.setAttribute('aria-label', '生成設定');
+    settingsButton.title = '生成設定';
+    $('i', settingsButton).className = 'fa-solid fa-sliders';
     $('#connection-status span').textContent = localModel.mode === 'mock' ? '測試模式' : '模型模式';
     $('.conversation__intro p').textContent = localModel.mode === 'mock'
       ? '本機測試模式 · 回覆由測試後端產生'
@@ -106,7 +184,7 @@
     sendButton.disabled = true;
     chatStatus.textContent = '正在等待模型回覆…';
     try {
-      const result = await modelApi('/chat', { messages });
+      const result = await modelApi('/chat', { messages, generation });
       onReply(result.content);
       chatStatus.textContent = '';
       return true;
@@ -170,7 +248,11 @@
     const data = panelData[kind] || panelData.tools;
     panelEyebrow.textContent = data[0];
     panelTitle.textContent = data[1];
-    if (kind === 'models' && localModel) {
+    if (kind === 'settings' && localModel) {
+      panelEyebrow.textContent = '回覆語氣與參數';
+      panelTitle.textContent = '生成設定';
+      renderGenerationSettings();
+    } else if (kind === 'models' && localModel) {
       panelContent.innerHTML = `
         <p class="panel-note"><strong id="configured-model"></strong><br>
           模型連線由本機啟動設定管理。</p>
