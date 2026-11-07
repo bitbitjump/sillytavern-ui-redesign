@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS chat_settings (
     settings TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS account_profiles (
+    owner TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    avatar TEXT,
+    appearance TEXT
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

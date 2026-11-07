@@ -249,9 +249,9 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         send.disabled = true;
         input.disabled = true;
         const signIn = testMode ? '/_test/signin' : '/signin-with-chatgpt?return_to=%2F';
-        renderAccount(null, testMode ? '測試登入' : '登入', signIn);
-        api('/account').then(({ email }) => {
-            if (email) renderAccount(email, testMode ? '切換測試帳號' : '登出',
+        renderAccount({}, testMode ? '測試登入' : '登入', signIn);
+        api('/account').then(profile => {
+            if (profile.email) renderAccount(profile, testMode ? '切換測試帳號' : '登出',
                 testMode ? signIn : '/signout-with-chatgpt?return_to=%2F');
         }).catch(() => {});
         try {
@@ -276,5 +276,6 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         }
     }
 
-    return { init, modelPanel, newChat, sendMessage, getSettings, saveSettings };
+    return { init, modelPanel, newChat, sendMessage, getSettings, saveSettings,
+        saveAccountPreferences: preferences => api('/account', preferences) };
 }

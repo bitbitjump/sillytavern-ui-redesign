@@ -306,14 +306,59 @@ async function chatRoute(request, env, path, owner, now) {
     return json({ job }, 202);
 }
 
+function validAvatar(avatar) {
+    if (avatar === null) return true;
+    const prefix = 'data:image/jpeg;base64,';
+    if (typeof avatar !== 'string' || avatar.length > 64_000 || !avatar.startsWith(prefix)) return false;
+    const encoded = avatar.slice(prefix.length);
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4) return false;
+    const bytes = atob(encoded);
+    return bytes.length >= 32 && bytes.startsWith('\xff\xd8\xff') && bytes.endsWith('\xff\xd9');
+}
+
+async function readAccount(db, owner, email) {
+    const profile = owner && db
+        ? await db.prepare('SELECT display_name AS displayName,avatar,appearance FROM account_profiles WHERE owner=?').bind(owner).first()
+        : null;
+    if (!profile) return json({ email });
+    return json({ email, ...profile, appearance: JSON.parse(profile.appearance) });
+}
+
+async function accountRoute(request, env) {
+    const owner = request.headers.get('oai-authenticated-user-id');
+    const email = owner ? request.headers.get('oai-authenticated-user-email') : null;
+    if (request.method === 'GET') return readAccount(env.DB, owner, email);
+    requireSameOrigin(request);
+    identity(request, env);
+    if (!env.DB) throw new HttpError(503, '網站的帳號設定尚未啟用。');
+    const { displayName, avatar, appearance } = await readJson(request);
+    if (appearance !== undefined) {
+        const { mode, color } = appearance || {};
+        if (!['day', 'night', 'custom'].includes(mode) || typeof color !== 'string' || !/^#[a-f\d]{6}$/i.test(color)) {
+            throw new HttpError(400, '外觀設定格式錯誤。');
+        }
+        await env.DB.prepare(`INSERT INTO account_profiles (owner,appearance) VALUES (?,?)
+            ON CONFLICT(owner) DO UPDATE SET appearance=excluded.appearance`)
+            .bind(owner, JSON.stringify({ mode, color })).run();
+        return readAccount(env.DB, owner, email);
+    }
+    if (typeof displayName !== 'string' || displayName.length > 40 || /[\x00-\x1f\x7f]/.test(displayName)) {
+        throw new HttpError(400, '顯示名稱限 40 字元，請填寫單行文字。');
+    }
+    if (!validAvatar(avatar)) throw new HttpError(400, '頭貼格式不符，請重新選擇圖片。');
+    const name = displayName.trim();
+    await env.DB.prepare(`INSERT INTO account_profiles (owner,display_name,avatar) VALUES (?,?,?)
+        ON CONFLICT(owner) DO UPDATE SET display_name=excluded.display_name,avatar=excluded.avatar`).bind(owner, name, avatar).run();
+    return readAccount(env.DB, owner, email);
+}
+
 export async function handleTavernApi(request, env) {
     const path = new URL(request.url).pathname;
     if (!/^\/api\/(tavern(?:\/|$)|connector\/|discord\/interactions$)/.test(path)) return null;
     const now = Date.now();
     try {
-        if (request.method === 'GET' && path === '/api/tavern/account') {
-            const signedIn = request.headers.has('oai-authenticated-user-id');
-            return json({ email: signedIn ? request.headers.get('oai-authenticated-user-email') : null });
+        if (['GET', 'POST'].includes(request.method) && path === '/api/tavern/account') {
+            return await accountRoute(request, env);
         }
         if (!env.DB) throw new HttpError(503, '網站的模型服務尚未設定。');
         if (request.method === 'POST' && path === '/api/discord/interactions') return await discordInteraction(request, env, now);

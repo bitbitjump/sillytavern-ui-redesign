@@ -29,7 +29,10 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
   let activeChat;
   const hosted = document.body.hasAttribute('data-hosted');
   let hostedUi;
-  let accountEmail;
+  let accountProfile = {};
+  const defaultAppearance = { mode: 'night', color: '#d9a05b' };
+  const appearanceKey = 'tavern-guest-appearance';
+  let savedAppearance = defaultAppearance;
   function roomSettings() {
     return (hosted ? hostedUi?.getSettings() : activeChat?.settings) || {};
   }
@@ -241,7 +244,8 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
         <button class="panel-card" type="button" data-select-model="新增模型連線"><span class="panel-card__icon"><i class="fa-solid fa-plug"></i></span><span><strong>新增模型連線</strong><small>OpenAI 相容 API、Ollama 或自訂端點</small></span><i class="fa-solid fa-chevron-right"></i></button>
       </div></section><p class="panel-note">這個公開展示站不保存 API 金鑰。實際串接會放在本機／伺服器端設定，避免把私人連線資訊送到前端。</p>`],
     generation: ['這個聊天', '語氣與生成參數'],
-    account: ['個人', '帳號設定', '<div class="toggle-row account-profile"><span>登入帳號</span><strong id="account-profile-email"></strong></div>'],
+    account: ['個人', '帳號設定'],
+    appearance: ['個人', '外觀設定'],
     settings: ['這個聊天', '聊天設定', `
       <section class="panel-section"><h3>回覆偏好</h3>
         <div class="toggle-row"><span>串流顯示回覆</span><button class="switch is-on" type="button" aria-label="切換串流顯示"></button></div>
@@ -292,19 +296,198 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     accountToggle.focus({ preventScroll: true });
   }
 
-  function renderAccount(email, actionLabel, actionUrl) {
-    accountEmail = email;
-    if (email) {
-      const name = email.split('@')[0];
-      $('#account-name').textContent = name.charAt(0).toUpperCase() + name.slice(1);
-      $('#account-caption').textContent = '帳號與設定';
-      $('.account-avatar').textContent = Array.from(name)[0]?.toUpperCase() || '•';
+  function accountDisplayName({ email, displayName } = accountProfile) {
+    const localName = email?.split('@')[0] || '訪客';
+    return displayName || localName.charAt(0).toUpperCase() + localName.slice(1);
+  }
+
+  function drawAvatar(element, name, avatar) {
+    element.textContent = Array.from(name)[0]?.toUpperCase() || '•';
+    if (!avatar) return;
+    const image = document.createElement('img');
+    image.alt = '';
+    image.src = avatar;
+    element.replaceChildren(image);
+  }
+
+  function renderAccount(profile, actionLabel, actionUrl) {
+    const justSignedIn = !accountProfile.email && profile.email;
+    accountProfile = profile;
+    if (profile.email) {
+      const name = accountDisplayName();
+      $('#account-name').textContent = name;
+      drawAvatar($('.account-avatar', accountToggle), name, profile.avatar);
+      savedAppearance = profile.appearance || defaultAppearance;
+      applyAppearance(savedAppearance);
+    } else {
+      loadGuestAppearance();
     }
-    const action = $('#account-action');
-    $('span', action).textContent = actionLabel;
-    action.href = actionUrl;
-    action.hidden = false;
-    if ($('#account-profile-email')) $('#account-profile-email').textContent = accountEmail || '尚未登入';
+    if (actionLabel) {
+      const action = $('#account-action');
+      $('span', action).textContent = actionLabel;
+      action.href = actionUrl;
+      action.hidden = false;
+    }
+    if (justSignedIn && $('#account-profile-email')) renderAccountSettings();
+  }
+
+  async function resizeAvatar(file) {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) {
+      throw new Error('請選擇 10 MB 以下的 JPG、PNG 或 WebP 圖片。');
+    }
+    const image = await createImageBitmap(file);
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 192;
+      const context = canvas.getContext('2d', { alpha: false });
+      context.fillStyle = '#eee8df';
+      context.fillRect(0, 0, 192, 192);
+      const size = Math.min(image.width, image.height);
+      context.drawImage(image, (image.width - size) / 2, (image.height - size) / 2, size, size, 0, 0, 192, 192);
+      return canvas.toDataURL('image/jpeg', 0.82);
+    } finally {
+      image.close();
+    }
+  }
+
+  function renderAccountSettings() {
+    panelContent.innerHTML = `
+      <div class="toggle-row account-profile"><span>登入帳號</span><strong id="account-profile-email"></strong></div>
+      <form class="generation-form personal-form" id="account-profile-form">
+        <div class="profile-avatar-row">
+          <span class="account-avatar profile-avatar" id="profile-avatar" aria-hidden="true"></span>
+          <div class="profile-avatar-actions">
+            <input type="file" accept="image/jpeg,image/png,image/webp" id="profile-file" hidden>
+            <button type="button" id="choose-profile-avatar">更換頭貼</button>
+            <button type="button" id="remove-profile-avatar">移除頭貼</button>
+          </div>
+        </div>
+        <label class="generation-field"><span>顯示名稱</span><input name="displayName" type="text" maxlength="40" autocomplete="nickname"></label>
+        <div class="generation-actions"><button type="submit">儲存帳號設定</button></div>
+      </form>
+      <p class="room-settings-note" id="profile-guest-note">登入後即可修改頭貼和顯示名稱。</p>`;
+    $('#account-profile-email').textContent = accountProfile.email || '尚未登入';
+    const form = $('#account-profile-form');
+    form.hidden = !accountProfile.email;
+    $('#profile-guest-note').hidden = !!accountProfile.email;
+    if (form.hidden) return;
+    const name = form.elements.namedItem('displayName');
+    name.value = accountProfile.displayName || '';
+    name.placeholder = accountDisplayName({ email: accountProfile.email });
+    const fileInput = $('#profile-file');
+    const choose = $('#choose-profile-avatar');
+    const remove = $('#remove-profile-avatar');
+    const submit = $('button[type="submit"]', form);
+    let avatar = accountProfile.avatar ?? null;
+    let upload = 0;
+    function preview() {
+      drawAvatar($('#profile-avatar', form), name.value.trim() || name.placeholder, avatar);
+      remove.hidden = !avatar;
+    }
+    preview();
+    name.oninput = preview;
+    choose.onclick = () => fileInput.click();
+    remove.onclick = () => {
+      upload++;
+      avatar = null;
+      submit.disabled = false;
+      panelStatus.textContent = '';
+      preview();
+    };
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const request = ++upload;
+      fileInput.value = '';
+      submit.disabled = true;
+      panelStatus.textContent = '';
+      try {
+        const resized = await resizeAvatar(file);
+        if (request !== upload || !form.isConnected || !panel.open) return;
+        avatar = resized;
+        preview();
+      } catch (error) {
+        if (request === upload && form.isConnected && panel.open) panelStatus.textContent = error.message || '無法讀取圖片。';
+      } finally {
+        if (request === upload) submit.disabled = false;
+      }
+    };
+    form.onsubmit = async event => {
+      event.preventDefault();
+      if (submit.disabled) return;
+      for (const control of [submit, name, choose, remove]) control.disabled = true;
+      panelStatus.textContent = '';
+      try {
+        renderAccount(await hostedUi.saveAccountPreferences({ displayName: name.value, avatar }));
+        if (form.isConnected && panel.open) panelStatus.textContent = '已儲存帳號設定。';
+      } catch (error) {
+        if (form.isConnected && panel.open) panelStatus.textContent = error.message;
+      } finally {
+        for (const control of [submit, name, choose, remove]) control.disabled = false;
+      }
+    };
+  }
+
+  function applyAppearance({ mode, color }) {
+    document.documentElement.dataset.appearance = mode;
+    document.documentElement.style.setProperty('--appearance-color', color);
+  }
+
+  function loadGuestAppearance() {
+    try {
+      const appearance = JSON.parse(localStorage.getItem(appearanceKey));
+      if (appearance && ['day', 'night', 'custom'].includes(appearance.mode) && /^#[0-9a-f]{6}$/i.test(appearance.color)) {
+        savedAppearance = appearance;
+      }
+    } catch {
+      // Use the default theme when browser storage is unavailable.
+    }
+    applyAppearance(savedAppearance);
+  }
+
+  function renderAppearanceSettings() {
+    panelContent.innerHTML = `
+      <form class="generation-form personal-form" id="appearance-form">
+        <fieldset class="appearance-choices">
+          <legend>配色模式</legend>
+          <label><input type="radio" name="mode" value="day">白天</label>
+          <label><input type="radio" name="mode" value="night">黑夜</label>
+          <label><input type="radio" name="mode" value="custom">自訂</label>
+        </fieldset>
+        <label class="appearance-color" hidden><span>主色</span><input type="color" name="color"></label>
+        <p class="room-settings-note">自訂沿用黑夜的明暗，只換色系。</p>
+        <div class="generation-actions"><button type="submit">儲存外觀</button></div>
+      </form>`;
+    const form = $('#appearance-form');
+    const color = form.elements.namedItem('color');
+    const modes = form.elements.namedItem('mode');
+    modes.value = savedAppearance.mode;
+    color.value = savedAppearance.color;
+    function preview() {
+      $('.appearance-color', form).hidden = modes.value !== 'custom';
+      applyAppearance({ mode: modes.value, color: color.value });
+    }
+    preview();
+    form.oninput = preview;
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const appearance = { mode: modes.value, color: color.value };
+      for (const control of form.elements) control.disabled = true;
+      try {
+        if (accountProfile.email) {
+          renderAccount(await hostedUi.saveAccountPreferences({ appearance }));
+        } else {
+          savedAppearance = appearance;
+          applyAppearance(savedAppearance);
+          localStorage.setItem(appearanceKey, JSON.stringify(appearance));
+        }
+        if (form.isConnected && panel.open) panelStatus.textContent = '已儲存外觀。';
+      } catch (error) {
+        if (form.isConnected && panel.open) panelStatus.textContent = error.message || '無法儲存外觀。';
+      } finally {
+        for (const control of form.elements) control.disabled = false;
+      }
+    };
   }
 
   function openPanel(kind) {
@@ -320,6 +503,10 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
       renderGenerationSettings();
     } else if (kind === 'settings') {
       renderChatSettings();
+    } else if (kind === 'account') {
+      renderAccountSettings();
+    } else if (kind === 'appearance') {
+      renderAppearanceSettings();
     } else if (kind === 'models' && hostedUi) {
       hostedUi.modelPanel();
     } else if (kind === 'models' && localModel) {
@@ -346,9 +533,6 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
       });
     } else {
       panelContent.innerHTML = data[2];
-      if (kind === 'account') {
-        $('#account-profile-email').textContent = accountEmail || (hosted ? '尚未登入' : '目前為訪客');
-      }
     }
     panelStatus.textContent = '';
     pointerStartedOnBackdrop = false;
@@ -356,6 +540,9 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     panelContent.scrollTop = 0;
   }
   function closePanel() { panel.close(); }
+  panel.addEventListener('close', () => {
+    if ($('#appearance-form')) applyAppearance(savedAppearance);
+  });
   function isBackdropPointer(event) {
     if (event.target !== panel) return false;
     const bounds = panel.getBoundingClientRect();
@@ -541,6 +728,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
       return hostedUi.init();
     }).catch(() => { chatStatus.textContent = '網站聊天模組無法載入。'; });
   } else {
+    loadGuestAppearance();
     initLocalModel();
   }
 })();

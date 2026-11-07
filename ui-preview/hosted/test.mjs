@@ -74,6 +74,19 @@ try {
     assert.equal(aliceAccount.headers.get('Cache-Control'), 'no-store');
     assert.deepEqual(await aliceAccount.json(), { email: 'alice@example.test' });
     assert.deepEqual(await (await call('/api/tavern/account', { user: 'bob' })).json(), { email: 'bob@example.test' });
+    const appearance = { mode: 'custom', color: '#5777dd' };
+    const accountPath = '/api/tavern/account';
+    assert.equal((await call(accountPath, { body: { displayName: '訪客', avatar: null } })).status, 401);
+    assert.equal((await call(accountPath, { user: 'alice', origin: 'https://other.test', body: { appearance } })).status, 403);
+    assert.equal((await call(accountPath, { user: 'alice', body: { displayName: 'Alice', avatar: 'data:image/svg+xml;base64,AAAA' } })).status, 400);
+    assert.equal((await call(accountPath, { user: 'alice', body: { appearance: { mode: 'custom', color: 'red' } } })).status, 400);
+    assert.equal((await call(accountPath, { user: 'alice', body: { displayName: ' 夜雨 ', avatar: null } })).status, 200);
+    const alicePreferences = { email: 'alice@example.test', displayName: '夜雨', avatar: null, appearance };
+    assert.deepEqual(await (await call(accountPath, { user: 'alice', body: { appearance } })).json(), alicePreferences);
+    assert.deepEqual(await (await call(accountPath, { user: 'alice', body: { displayName: 'Alice', avatar: null } })).json(), {
+        ...alicePreferences, displayName: 'Alice',
+    });
+    assert.deepEqual(await (await call(accountPath, { user: 'bob' })).json(), { email: 'bob@example.test' });
     assert.equal((await call('/api/tavern/chats')).status, 401);
     assert.equal((await call('/api/tavern/chats', { user: 'outsider' })).status, 403);
     assert.equal((await call('/api/tavern/request', { user: 'alice', body: {}, origin: 'https://other.test' })).status, 403);
