@@ -23,6 +23,7 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
   const isNarrow = () => matchMedia('(max-width: 940px)').matches;
   const versions = new WeakMap();
   let toastTimer;
+  let pinnedMenu;
   let pointerStartedOnBackdrop = false;
   let localModel;
   let generating = false;
@@ -295,6 +296,53 @@ import { chatContextLimit, generationParameters, replyStyles, validateChatContex
     accountMenu.hidePopover();
     accountToggle.focus({ preventScroll: true });
   }
+
+  function bindMenuPreview(trigger, menu) {
+    const isOpen = () => menu.matches(':popover-open');
+    const show = () => menu.showPopover({ source: trigger });
+    let closeTimer;
+
+    trigger.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'mouse') return;
+      clearTimeout(closeTimer);
+      if (!pinnedMenu && !isOpen() && !panel.open) show();
+    });
+    menu.addEventListener('pointerenter', () => clearTimeout(closeTimer));
+
+    function scheduleClose(event) {
+      if (event.pointerType && event.pointerType !== 'mouse') return;
+      if (!isOpen() || pinnedMenu === menu) return;
+      if (event.relatedTarget && (trigger.contains(event.relatedTarget) || menu.contains(event.relatedTarget))) return;
+      clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => {
+        if (pinnedMenu !== menu && isOpen() && !trigger.matches(':hover')
+          && !menu.matches(':hover') && !menu.contains(document.activeElement)) menu.hidePopover();
+      }, 220);
+    }
+    trigger.addEventListener('pointerleave', scheduleClose);
+    menu.addEventListener('pointerleave', scheduleClose);
+    menu.addEventListener('focusout', scheduleClose);
+
+    trigger.addEventListener('click', event => {
+      event.preventDefault();
+      clearTimeout(closeTimer);
+      if (pinnedMenu === menu && isOpen()) {
+        menu.hidePopover();
+        return;
+      }
+      if (!isOpen()) show();
+      pinnedMenu = menu;
+    });
+    menu.addEventListener('beforetoggle', event => {
+      if (event.newState === 'closed') {
+        clearTimeout(closeTimer);
+        if (pinnedMenu === menu) pinnedMenu = undefined;
+      }
+    });
+  }
+
+  bindMenuPreview(accountToggle, accountMenu);
+  bindMenuPreview(toolToggle, toolPicker);
 
   function accountDisplayName({ email, displayName } = accountProfile) {
     const localName = email?.split('@')[0] || '訪客';
