@@ -69,6 +69,11 @@ const mac = createConnector(config, {
 });
 
 try {
+    assert.deepEqual(await (await call('/api/tavern/account')).json(), { email: null });
+    const aliceAccount = await call('/api/tavern/account', { user: 'alice' });
+    assert.equal(aliceAccount.headers.get('Cache-Control'), 'no-store');
+    assert.deepEqual(await aliceAccount.json(), { email: 'alice@example.test' });
+    assert.deepEqual(await (await call('/api/tavern/account', { user: 'bob' })).json(), { email: 'bob@example.test' });
     assert.equal((await call('/api/tavern/chats')).status, 401);
     assert.equal((await call('/api/tavern/chats', { user: 'outsider' })).status, 403);
     assert.equal((await call('/api/tavern/request', { user: 'alice', body: {}, origin: 'https://other.test' })).status, 403);

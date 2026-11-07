@@ -8,7 +8,7 @@
     <link href="../public/webfonts/NotoSans/stylesheet.css" rel="stylesheet">
     <link href="../public/css/fontawesome.min.css" rel="stylesheet">
     <link href="../public/css/solid.min.css" rel="stylesheet">
-    <link href="app.css?v=13" rel="stylesheet">
+    <link href="app.css?v=14" rel="stylesheet">
 </head>
 <body>
     <div class="app-shell" id="app-shell">
@@ -39,6 +39,18 @@
                     <button class="chat-row" type="button" data-title="角色設定討論"><i class="fa-solid fa-mug-hot"></i><span>角色設定討論</span><i class="fa-solid fa-ellipsis row-more"></i></button>
                 </section>
             </nav>
+            <footer class="sidebar__account">
+                <button class="account-trigger" id="account-toggle" type="button" popovertarget="account-menu" aria-label="帳號選單">
+                    <span class="account-avatar" aria-hidden="true"><i class="fa-solid fa-user"></i></span>
+                    <span class="account-trigger__text"><strong id="account-name">訪客</strong><small id="account-caption">帳號與設定</small></span>
+                    <i class="fa-solid fa-ellipsis" aria-hidden="true"></i>
+                </button>
+                <div class="account-menu" id="account-menu" popover="auto" role="group" aria-label="帳號選項">
+                    <button type="button" data-panel="account"><i class="fa-solid fa-gear" aria-hidden="true"></i>帳號設定</button>
+                    <button type="button" data-panel="generation"><i class="fa-solid fa-sliders" aria-hidden="true"></i>回覆設定</button>
+                    <a id="account-action" target="_top" hidden><i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i><span></span></a>
+                </div>
+            </footer>
         </aside>
         <button class="scrim" id="scrim" type="button" aria-label="關閉面板" tabindex="-1"></button>
         <main class="workspace">
@@ -109,6 +121,6 @@
         </dialog>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=13"></script>
+    <script type="module" src="app.js?v=14"></script>
 </body>
 </html>

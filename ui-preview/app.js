@@ -12,6 +12,8 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   const panelStatus = $('#panel-status');
   const toolPicker = $('#composer-tools');
   const toolToggle = $('#composer-tools-toggle');
+  const accountMenu = $('#account-menu');
+  const accountToggle = $('#account-toggle');
   const conversation = $('#conversation');
   const composer = $('#composer');
   const input = $('#message-input');
@@ -27,6 +29,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   let activeChat;
   const hosted = document.body.hasAttribute('data-hosted');
   let hostedUi;
+  let accountEmail;
   const settingsKey = 'tavern-generation-settings';
   let generation = { style: 'default' };
 
@@ -214,6 +217,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
         <button class="panel-card" type="button" data-select-model="新增模型連線"><span class="panel-card__icon"><i class="fa-solid fa-plug"></i></span><span><strong>新增模型連線</strong><small>OpenAI 相容 API、Ollama 或自訂端點</small></span><i class="fa-solid fa-chevron-right"></i></button>
       </div></section><p class="panel-note">這個公開展示站不保存 API 金鑰。實際串接會放在本機／伺服器端設定，避免把私人連線資訊送到前端。</p>`],
     generation: ['回覆設定', '語氣與生成參數'],
+    account: ['個人', '帳號設定', '<div class="toggle-row account-profile"><span>登入帳號</span><strong id="account-profile-email"></strong></div>'],
     settings: ['這個聊天', '聊天設定', `
       <section class="panel-section"><h3>回覆偏好</h3>
         <div class="toggle-row"><span>串流顯示回覆</span><button class="switch is-on" type="button" aria-label="切換串流顯示"></button></div>
@@ -236,6 +240,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     if (isNarrow()) shell.classList.add('sidebar-open'); else shell.classList.remove('sidebar-collapsed');
   }
   function closeSidebar() {
+    closeAccountMenu();
     shell.classList.remove('sidebar-open');
     if (!isNarrow()) shell.classList.add('sidebar-collapsed');
   }
@@ -257,11 +262,33 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     if (event.newState === 'open') positionToolPicker();
   });
 
+  function closeAccountMenu() {
+    if (!accountMenu.matches(':popover-open')) return;
+    accountMenu.hidePopover();
+    accountToggle.focus({ preventScroll: true });
+  }
+
+  function renderAccount(email, actionLabel, actionUrl) {
+    accountEmail = email;
+    if (email) {
+      const name = email.split('@')[0];
+      $('#account-name').textContent = name.charAt(0).toUpperCase() + name.slice(1);
+      $('#account-caption').textContent = '帳號與設定';
+      $('.account-avatar').textContent = Array.from(name)[0]?.toUpperCase() || '•';
+    }
+    const action = $('#account-action');
+    $('span', action).textContent = actionLabel;
+    action.href = actionUrl;
+    action.hidden = false;
+    if ($('#account-profile-email')) $('#account-profile-email').textContent = accountEmail || '尚未登入';
+  }
+
   function openPanel(kind) {
     if (panel.open) return;
     const data = panelData[kind];
     if (!data) return;
     closeToolPicker();
+    closeAccountMenu();
     panelEyebrow.textContent = data[0];
     panelTitle.textContent = data[1];
     if (kind === 'generation') {
@@ -292,6 +319,9 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
       });
     } else {
       panelContent.innerHTML = data[2];
+      if (kind === 'account') {
+        $('#account-profile-email').textContent = accountEmail || (hosted ? '尚未登入' : '目前為訪客');
+      }
     }
     panelStatus.textContent = '';
     pointerStartedOnBackdrop = false;
@@ -317,7 +347,10 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
     pointerStartedOnBackdrop = false;
     if (shouldClose) closePanel();
   });
-  function closeFloatingSidebar() { shell.classList.remove('sidebar-open'); }
+  function closeFloatingSidebar() {
+    closeAccountMenu();
+    shell.classList.remove('sidebar-open');
+  }
   function resizeInput() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 180)}px`; }
   function escapeHtml(value) { const el = document.createElement('div'); el.textContent = value; return el.innerHTML; }
   function messageText(article) { return $('.message__body', article)?.innerText.trim() || ''; }
@@ -455,7 +488,8 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   };
   input.oninput = resizeInput; input.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); composer.requestSubmit(); } };
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !panel.open && !toolPicker.matches(':popover-open')) closeFloatingSidebar();
+    if (event.key === 'Escape' && !panel.open
+      && !toolPicker.matches(':popover-open') && !accountMenu.matches(':popover-open')) closeFloatingSidebar();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
       if (!panel.open) $('#new-chat').click();
@@ -469,7 +503,7 @@ import { generationParameters, replyStyles, validateGenerationSettings } from '.
   if (hosted) {
     import('./hosted/ui.mjs').then(({ createHostedUi }) => {
       hostedUi = createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
-        closeFloatingSidebar, isNarrow, getGeneration: () => generation });
+        closeFloatingSidebar, isNarrow, renderAccount, getGeneration: () => generation });
       return hostedUi.init();
     }).catch(() => { chatStatus.textContent = '網站聊天模組無法載入。'; });
   } else {

@@ -179,14 +179,84 @@
   cursor: pointer;
 }
 .generation-actions button[type="submit"] { background: var(--accent); color: var(--ink); }
-.hosted-account {
+.sidebar { max-height: 100dvh; }
+.sidebar__account {
+  flex: none;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+.account-trigger {
+  display: flex;
+  width: 100%;
+  height: 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted2);
+  cursor: pointer;
+  text-align: left;
+}
+.account-trigger:hover, .account-trigger:has(+ :popover-open) { background: var(--raised); }
+.account-avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: #463021;
   color: var(--accent2);
-  text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.account-trigger__text { flex: 1; min-width: 0; }
+.account-trigger__text > * {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.account-trigger__text strong { color: var(--text); font-size: 13px; }
+.account-trigger__text small { color: var(--muted); font-size: 11px; }
+.account-menu {
+  position: fixed;
+  inset: auto auto calc(62px + env(safe-area-inset-bottom)) 10px;
+  width: min(calc(var(--sw) - 21px), calc(88vw - 21px));
+  margin: 0;
+  padding: 5px;
+  border: 1px solid var(--line2);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 32px #0007;
+}
+.account-menu button, .account-menu a {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+}
+.account-menu a[hidden] { display: none; }
+.account-menu :is(button, a):is(:hover, :focus-visible) { background: var(--hover); }
+.account-menu i { width: 16px; color: var(--muted2); text-align: center; }
+.account-profile { overflow-wrap: anywhere; }
+@media (min-width: 941px) { .sidebar-collapsed .sidebar__account { visibility: hidden; } }
 @media (max-width: 940px) {
   .sidebar-open .sidebar { pointer-events: auto; }
+  .app-shell:not(.sidebar-open) .sidebar__account { visibility: hidden; }
 }
 .app-shell.sidebar-collapsed{grid-template-columns:0 minmax(0,1fr)}.sidebar-collapsed .sidebar{width:0;opacity:0;pointer-events:none}.sidebar-collapsed .sidebar__open{visibility:visible}
 @media(max-width:940px){.app-shell{display:block}.workspace{width:100%}.sidebar{position:fixed;top:0;left:0;width:min(310px,88vw);transform:translateX(-102%);opacity:1;box-shadow:18px 0 55px rgba(0,0,0,.34);pointer-events:auto}.sidebar__open{visibility:visible}.sidebar-open .sidebar{transform:translateX(0)}.sidebar-open .scrim{visibility:visible;opacity:1}.sidebar-collapsed .sidebar{width:min(310px,88vw);opacity:1}.topbar{padding:0 10px}.conversation{padding-right:max(18px,calc((100% - 760px)/2));padding-left:max(18px,calc((100% - 760px)/2))}.composer-wrap{padding-right:max(12px,calc((100% - 790px)/2));padding-left:max(12px,calc((100% - 790px)/2))}}

@@ -22,7 +22,7 @@ async function api(path, body) {
     return data;
 }
 
-export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel, closeFloatingSidebar, isNarrow, getGeneration }) {
+export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount, getGeneration }) {
     const input = $('#message-input');
     const send = $('#send-button');
     const dialog = $('#utility-panel');
@@ -193,16 +193,14 @@ export function createHostedUi({ addMessage, escapeHtml, resizeInput, openPanel,
         $('#chat-history').innerHTML = '<section class="chat-group"><h2>我的聊天室</h2></section>';
         send.disabled = true;
         input.disabled = true;
-        const account = document.createElement('a');
-        account.className = 'hosted-account';
-        account.textContent = testMode ? '測試登入' : '登入';
-        account.href = testMode ? '/_test/signin' : '/signin-with-chatgpt?return_to=%2F';
-        account.target = '_top';
-        $('.topbar__actions').prepend(account);
+        const signIn = testMode ? '/_test/signin' : '/signin-with-chatgpt?return_to=%2F';
+        renderAccount(null, testMode ? '測試登入' : '登入', signIn);
+        api('/account').then(({ email }) => {
+            if (email) renderAccount(email, testMode ? '切換測試帳號' : '登出',
+                testMode ? signIn : '/signout-with-chatgpt?return_to=%2F');
+        }).catch(() => {});
         try {
             status = await api('/status');
-            account.textContent = testMode ? '切換測試帳號' : '登出';
-            if (!testMode) account.href = '/signout-with-chatgpt?return_to=%2F';
             $('#current-model').textContent = status.model;
             $('#chat-title').textContent = '新聊天';
             $('.conversation__intro p').textContent = testMode ? '本機整合測試 · Discord 與模型皆為模擬' : '在「模型」送出使用請求。';

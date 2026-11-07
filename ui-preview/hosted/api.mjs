@@ -278,6 +278,10 @@ export async function handleTavernApi(request, env) {
     if (!/^\/api\/(tavern(?:\/|$)|connector\/|discord\/interactions$)/.test(path)) return null;
     const now = Date.now();
     try {
+        if (request.method === 'GET' && path === '/api/tavern/account') {
+            const signedIn = request.headers.has('oai-authenticated-user-id');
+            return json({ email: signedIn ? request.headers.get('oai-authenticated-user-email') : null });
+        }
         if (!env.DB) throw new HttpError(503, '網站的模型服務尚未設定。');
         if (request.method === 'POST' && path === '/api/discord/interactions') return await discordInteraction(request, env, now);
         if (request.method === 'POST' && path.startsWith('/api/connector/')) return await connector(request, env, path, now);
