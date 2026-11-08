@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { handleTavernApi } from './api.mjs';
 import { createConnector, validateConnectorConfig } from './connector.mjs';
 import { createLocalDb } from './sqlite.mjs';
+import { summaryInstruction } from './memory.mjs';
 
 const site = 'https://tavern.example.test';
 const modelUrl = 'http://127.0.0.1:8787';
@@ -51,8 +52,13 @@ let sleeping = false;
 let starts = 0;
 let upstreamRequest;
 let upstreamReply = 'model answer';
+let summaryRequest;
+let summaryCalls = 0;
+let failSummary = false;
+const contextSize = 4096;
+const tokenCount = text => Math.ceil(text.length / 4);
 const config = validateConnectorConfig({ site, modelUrl, model, token, startScript: process.cwd() });
-const mac = createConnector(config, {
+const mockConnector = {
     launch: async () => { starts++; running = true; },
     pause: async () => {},
     fetcher: async (url, options) => {
@@ -60,14 +66,25 @@ const mac = createConnector(config, {
         assert.ok(url.startsWith(modelUrl));
         if (!running) throw new Error('stopped', { cause: { code: 'ECONNREFUSED' } });
         if (url.endsWith('/health')) return Response.json({ status: 'ok' });
-        if (url.endsWith('/props')) return Response.json({ is_sleeping: sleeping });
+        if (url.endsWith('/props')) return Response.json({ is_sleeping: sleeping, default_generation_settings: { n_ctx: contextSize } });
         if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: model }] });
+        if (url.endsWith('/apply-template')) return Response.json({ prompt: JSON.stringify(JSON.parse(options.body).messages) });
+        if (url.endsWith('/tokenize')) return Response.json({ tokens: Array(tokenCount(JSON.parse(options.body).content)).fill(0) });
         assert.ok(url.endsWith('/v1/chat/completions'));
         sleeping = false;
-        upstreamRequest = JSON.parse(options.body);
+        const request = JSON.parse(options.body);
+        assert.ok(tokenCount(JSON.stringify(request.messages)) + request.max_tokens <= contextSize);
+        if (request.messages[0]?.content === summaryInstruction) {
+            summaryCalls++;
+            if (failSummary) return new Response(null, { status: 503 });
+            summaryRequest = JSON.parse(request.messages.at(-1).content);
+            return Response.json({ choices: [{ message: { content: '備用鑰匙藏在閣樓。' } }] });
+        }
+        upstreamRequest = request;
         return Response.json({ choices: [{ message: { content: upstreamReply } }] });
     },
-});
+};
+const mac = createConnector(config, mockConnector);
 
 try {
     assert.deepEqual(await (await call('/api/tavern/account')).json(), { email: null });
@@ -217,8 +234,8 @@ try {
     assert.equal((await call(editPath, { ...alice, body: { index: 1, original: 'model answer', text: '改 AI 文字' } })).status, 400);
     const editedChat = await (await call(editPath, { ...alice, body: edit })).json();
     assert.equal(editedChat.title, edit.text);
-    assert.equal(editedChat.messages[0].content, edit.text);
-    assert.deepEqual(editedChat.messages.slice(1), retriedChat.messages.slice(1));
+    assert.equal(editedChat.message.content, edit.text);
+    assert.deepEqual((await (await call(chatPath, alice)).json()).messages.slice(1), retriedChat.messages.slice(1));
     assert.equal((await call(editPath, { ...alice, body: edit })).status, 409);
     assert.equal((await call(chatPath, { ...alice, body: { retry: 1 } })).status, 202);
     assert.equal((await call(editPath, { ...alice, body: { ...edit, original: edit.text } })).status, 409);
@@ -227,7 +244,7 @@ try {
 
     const rewriteEdit = { index: 6, original: retriedRewrite.messages[6].content, text: '改成第三種語氣' };
     const editedRewrite = await (await call(editPath, { ...alice, body: rewriteEdit })).json();
-    assert.equal(editedRewrite.messages[6].content, `改寫選取文字：${rewriteEdit.text}`);
+    assert.equal(editedRewrite.message.content, `改寫選取文字：${rewriteEdit.text}`);
     assert.equal((await call(chatPath, { ...alice, body: { retry: 7 } })).status, 202);
     await mac.step();
     const retryInput = JSON.parse(upstreamRequest.messages.at(-1).content);
@@ -269,6 +286,73 @@ try {
     assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'ready');
     assert.deepEqual((await (await call('/api/tavern/approvals', bob)).json()).requests, []);
     assert.equal(notifications.length, 1);
+
+    const longRoom = crypto.randomUUID();
+    const longPath = `/api/tavern/chats/${longRoom}`;
+    const legacy = Array.from({ length: 202 }, (_, i) => ({
+        role: i % 2 ? 'assistant' : 'user',
+        content: i === 0 ? '備用鑰匙藏在閣樓。' : `${i} ${'舊'.repeat(2900)}`,
+    }));
+    assert.ok(Buffer.byteLength(JSON.stringify(legacy)) > 512 * 1024);
+    db.prepare('INSERT INTO chats (id,owner,title,messages,updated) VALUES (?,?,?,?,?)')
+        .bind(longRoom, 'alice', '長篇聊天室', JSON.stringify(legacy), Date.now()).run();
+    const firstPage = await (await call(longPath, alice)).json();
+    assert.equal(firstPage.before, 178);
+    assert.equal(firstPage.start, 178);
+    assert.deepEqual(firstPage.messages, legacy.slice(178));
+    assert.equal((await call(`${longPath}?before=178`, bob)).status, 404);
+    assert.equal((await call(`${longPath}?before=-1`, alice)).status, 400);
+    const restored = [...firstPage.messages];
+    for (let before = firstPage.before; before !== null;) {
+        const page = await (await call(`${longPath}?before=${before}`, alice)).json();
+        restored.unshift(...page.messages);
+        before = page.before;
+    }
+    assert.deepEqual(restored, legacy);
+    assert.equal((await db.prepare('SELECT messages FROM chats WHERE id=?').bind(longRoom).first()).messages, '[]');
+    const turn = await call(longPath, { ...alice, body: { text: '接著寫' } });
+    assert.equal(turn.status, 202);
+    const longJob = (await turn.json()).job;
+    const queuedInput = JSON.parse((await db.prepare('SELECT input FROM jobs WHERE id=?').bind(longJob).first()).input);
+    assert.equal(queuedInput.history, undefined);
+    assert.ok(queuedInput.messages.length <= 41);
+    assert.equal((await (await call(`${longPath}?status=1`, alice)).json()).messages, undefined);
+    const callsBefore = summaryCalls;
+    await mac.step();
+    assert.equal(summaryCalls, callsBefore + 1);
+    assert.equal(summaryRequest.dialogue[0].content, legacy[0].content);
+    assert.match(upstreamRequest.messages[0].content, /備用鑰匙藏在閣樓/);
+    const later = await (await call(longPath, alice)).json();
+    assert.equal(later.job.state, 'done');
+    assert.equal(later.start, 180);
+    assert.equal(later.messages.at(-2).content, '接著寫');
+    assert.equal((await (await call(secondPath, alice)).json()).messages.length, 2);
+    const checkpoint = await db.prepare('SELECT * FROM chat_memory WHERE chat_id=?').bind(longRoom).first();
+    assert.equal(checkpoint.summary, '備用鑰匙藏在閣樓。');
+    assert.equal((await call(longPath, { ...alice, body: { retry: 1 } })).status, 202);
+    await mac.step();
+    assert.equal(upstreamRequest.messages.length, 1);
+    assert.equal(upstreamRequest.messages[0].content, legacy[0].content);
+    assert.deepEqual(await db.prepare('SELECT * FROM chat_memory WHERE chat_id=?').bind(longRoom).first(), checkpoint);
+    const editedOld = await call(`${longPath}/edit`, { ...alice, body: { index: 0, original: legacy[0].content, text: '改在地窖' } });
+    assert.equal(editedOld.status, 200);
+    assert.equal(await db.prepare('SELECT * FROM chat_memory WHERE chat_id=?').bind(longRoom).first(), null);
+    assert.equal((await (await call(`${longPath}?before=2`, alice)).json()).messages[0].content, '改在地窖');
+    const callsAfterEdit = summaryCalls;
+    const noSummaryMac = createConnector({ ...config, summarizeHistory: false }, mockConnector);
+    assert.equal((await call(longPath, { ...alice, body: { text: '停用摘要仍可聊天' } })).status, 202);
+    await noSummaryMac.step();
+    assert.equal(summaryCalls, callsAfterEdit);
+    assert.equal(upstreamRequest.messages.at(-1).content, '停用摘要仍可聊天');
+    assert.equal((await (await call(longPath, alice)).json()).job.state, 'done');
+    failSummary = true;
+    assert.equal((await call(longPath, { ...alice, body: { text: '摘要失敗仍可聊天' } })).status, 202);
+    await mac.step();
+    assert.equal(summaryCalls, callsAfterEdit + 1);
+    assert.equal(upstreamRequest.messages.at(-1).content, '摘要失敗仍可聊天');
+    assert.equal((await (await call(longPath, alice)).json()).job.state, 'done');
+    assert.equal(await db.prepare('SELECT * FROM chat_memory WHERE chat_id=?').bind(longRoom).first(), null);
+    console.log('通過：舊紀錄遷移、超過 200 則和 512 KiB、分頁、上下文容量、滾動摘要、重答與舊訊息編輯。');
     console.log('通過：帳號與聊天室隔離、獨立世界觀和生成設定、批准者驗證、避免重複啟動、閒置重載、過期重新申請。');
 } finally {
     db.close();

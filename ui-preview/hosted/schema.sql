@@ -22,6 +22,20 @@ CREATE TABLE IF NOT EXISTS chats (
 );
 CREATE INDEX IF NOT EXISTS chats_owner ON chats (owner, updated DESC);
 
+CREATE TABLE IF NOT EXISTS chat_messages (
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    PRIMARY KEY (chat_id, position)
+);
+
+CREATE TABLE IF NOT EXISTS chat_memory (
+    chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    offset INTEGER NOT NULL,
+    summary TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chat_settings (
     chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
     settings TEXT NOT NULL DEFAULT '{}'
@@ -48,5 +62,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (state, created);
+CREATE INDEX IF NOT EXISTS jobs_chat_history ON jobs (chat_id, created DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_chat_request
     ON jobs (chat_id) WHERE chat_id IS NOT NULL AND state IN ('queued', 'running');

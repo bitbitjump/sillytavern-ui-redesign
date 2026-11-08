@@ -3,6 +3,7 @@
   "token": "",
   "model": "f451-writer",
   "modelUrl": "http://127.0.0.1:8787",
+  "summarizeHistory": true,
   "startScript": "",
   "modelFile": ""
 }

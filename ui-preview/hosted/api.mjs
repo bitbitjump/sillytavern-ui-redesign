@@ -5,6 +5,7 @@ const minute = 60_000;
 const approvalWindow = 15 * minute;
 const activityWindow = 10 * minute;
 const jobWindow = 5 * minute;
+const pageSize = 24;
 const idPattern = /^[a-f0-9-]{36}$/;
 const modelStates = new Set(['ready', 'sleeping', 'loading', 'stopped', 'error']);
 
@@ -193,8 +194,12 @@ async function connector(request, env, path, now) {
                 ORDER BY j.created LIMIT 1)
             AND state='queued' RETURNING id,kind,input,expires`).bind(lease, now, now).first();
         const input = job && JSON.parse(job.input);
+        const messages = input?.messages;
+        const legacyPrompt = !body.memory && input?.context && messages.length > 13;
         return json({ job: job ? { id: job.id, kind: job.kind, expires: job.expires,
-            input: { messages: input.messages, parameters: input.parameters }, lease, model: env.TAVERN_MODEL_ID || 'f451-writer' } : null });
+            input: { messages: legacyPrompt ? [...messages.filter(message => message.role === 'system'), ...messages.slice(-11)] : messages,
+                parameters: input.parameters, context: body.memory === true ? input.context : undefined },
+            lease, model: env.TAVERN_MODEL_ID || 'f451-writer' } : null });
     }
     if (path !== '/api/connector/result') throw new HttpError(404, '找不到端點。');
     const job = await env.DB.prepare(`SELECT * FROM jobs WHERE id=? AND lease=? AND state='running' AND expires>?`)
@@ -206,7 +211,9 @@ async function connector(request, env, path, now) {
         ? input.rewrite.before + body.text + input.rewrite.after : body.text;
     const tooLong = typeof content === 'string' && content.length > 32_000;
     const ok = body.ok === true && (job.kind === 'prepare' || (typeof body.text === 'string' && body.text.trim() && !tooLong));
-    const failure = tooLong ? '回覆超過 32,000 字元，請縮短生成長度。' : '模型沒有完成請求。請確認 Mac、模型服務與外接磁碟。';
+    const failure = tooLong ? '回覆超過 32,000 字元，請縮短生成長度。'
+        : body.contextFull === true ? '這次訊息和聊天室設定超過模型可讀的長度。請縮短後再送出。'
+            : '模型沒有完成請求。請確認 Mac、模型服務與外接磁碟。';
     if (job.kind === 'prepare') {
         statements.push(env.DB.prepare(`UPDATE approvals SET state=?,expires=? WHERE id=? AND state='approved'
             AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND lease=? AND state='running' AND expires>?)`)
@@ -215,9 +222,25 @@ async function connector(request, env, path, now) {
         const reply = { role: 'assistant', content };
         if (input.selection) reply.rewrite = input.selection;
         if (input.retryOf !== undefined) reply.retryOf = input.retryOf;
-        statements.push(env.DB.prepare(`UPDATE chats SET title=?,messages=?,updated=? WHERE id=? AND owner=?
-            AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND lease=? AND state='running' AND expires>?)`)
-            .bind(input.title, JSON.stringify([...input.history, reply]), now, job.chat_id, job.owner, job.id, job.lease, now));
+        // A connector may finish a job queued before this version was deployed.
+        const position = input.position ?? input.history.length - 1;
+        const userMessage = input.userMessage ?? input.history.at(-1);
+        const activeJob = 'EXISTS (SELECT 1 FROM jobs WHERE id=? AND lease=? AND state=\'running\' AND expires>?)';
+        const lease = [job.id, job.lease, now];
+        statements.push(...migrateMessages(env.DB, job.chat_id, job.owner));
+        statements.push(env.DB.prepare(`INSERT INTO chat_messages (chat_id,position,message)
+            SELECT ?,?,? WHERE ${activeJob} UNION ALL SELECT ?,?,? WHERE ${activeJob}`)
+            .bind(job.chat_id, position, JSON.stringify(userMessage), ...lease,
+                job.chat_id, position + 1, JSON.stringify(reply), ...lease));
+        const memory = body.memory;
+        if (input.context?.archive && validMemory(memory, input.context)) {
+            statements.push(env.DB.prepare(`INSERT INTO chat_memory (chat_id,position,offset,summary)
+                SELECT ?,?,?,? WHERE ${activeJob}
+                ON CONFLICT(chat_id) DO UPDATE SET position=excluded.position,offset=excluded.offset,summary=excluded.summary`)
+                .bind(job.chat_id, memory.position, memory.offset, memory.summary, ...lease));
+        }
+        statements.push(env.DB.prepare(`UPDATE chats SET title=?,updated=MAX(updated+1,?) WHERE id=? AND owner=? AND ${activeJob}`)
+            .bind(input.title, now, job.chat_id, job.owner, ...lease));
         statements.push(env.DB.prepare(`UPDATE approvals SET expires=? WHERE id=? AND state='ready' AND expires>?
             AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND lease=? AND state='running' AND expires>?)`)
             .bind(now + activityWindow, job.approval_id, now, job.id, job.lease, now));
@@ -270,8 +293,59 @@ function validateRoomSettings(patch, previous = {}) {
     }
 }
 
-async function editChatMessage(db, chat, messages, owner, now, { index, original, text }) {
-    const message = Number.isInteger(index) && messages[index];
+function migrateMessages(db, id, owner) {
+    return [
+        db.prepare(`INSERT INTO chat_messages (chat_id,position,message)
+            SELECT c.id,m.key,m.value FROM chats c, json_each(c.messages) m
+            WHERE c.id=? AND c.owner=? AND c.messages<>'[]' ON CONFLICT DO NOTHING`).bind(id, owner),
+        db.prepare(`UPDATE chats SET messages='[]' WHERE id=? AND owner=? AND messages<>'[]'`).bind(id, owner),
+    ];
+}
+
+async function chatMessage(db, id, index) {
+    if (!Number.isSafeInteger(index) || index < 0) return;
+    const row = await db.prepare('SELECT message FROM chat_messages WHERE chat_id=? AND position=?').bind(id, index).first();
+    return row && JSON.parse(row.message);
+}
+
+async function messagePage(db, id, before, limit) {
+    const { results } = await db.prepare(`SELECT position,message FROM chat_messages WHERE chat_id=? AND position<?
+        ORDER BY position DESC LIMIT ?`).bind(id, before, limit).all();
+    return results.reverse();
+}
+
+async function readMessagePage(db, id, before) {
+    const rows = await messagePage(db, id, before, pageSize + 1);
+    const older = rows.length > pageSize;
+    if (older) rows.shift();
+    const start = rows[0]?.position ?? 0;
+    return { start, before: older ? start : null, messages: rows.map(row => JSON.parse(row.message)) };
+}
+
+function recentPrompt(rows, before) {
+    let characters = 0;
+    const recent = [];
+    for (const row of rows.reverse()) {
+        characters += row.message.length;
+        if (characters > 96_000) break;
+        const { role, content } = JSON.parse(row.message);
+        recent.unshift({ role, content });
+    }
+    if (recent[0]?.role === 'assistant') recent.shift();
+    return { recent, start: before - recent.length };
+}
+
+function validMemory(memory, { archive }) {
+    if (!Number.isSafeInteger(memory?.position) || !Number.isSafeInteger(memory?.offset) || memory.offset < 0
+        || typeof memory.summary !== 'string' || !memory.summary.trim() || memory.summary.length > 6000) return false;
+    const end = archive.start + archive.messages.length;
+    return (memory.position > archive.start || (memory.position === archive.start && memory.offset > archive.offset))
+        && (memory.position === end ? memory.offset === 0
+            : memory.position < end && memory.offset < archive.messages[memory.position - archive.start].content.length);
+}
+
+async function editChatMessage(db, chat, owner, now, { index, original, text }) {
+    const message = await chatMessage(db, chat.id, index);
     if (message?.role !== 'user') throw new HttpError(400, '只能編輯自己送出的訊息。');
     if (message.content !== original) throw new HttpError(409, '訊息已更新，請重新開啟聊天室後再試。');
     const rewrite = original.startsWith(rewriteRequestPrefix);
@@ -280,14 +354,20 @@ async function editChatMessage(db, chat, messages, owner, now, { index, original
         throw new HttpError(400, `請輸入 1 到 ${limit} 字的訊息。`);
     }
     const content = rewrite ? rewriteRequestPrefix + text.trim() : text.trim();
-    messages[index] = { ...message, content };
+    const edited = { ...message, content };
     const title = index === 0 && chat.title === original.slice(0, 28) ? content.slice(0, 28) : chat.title;
     await cleanExpired(db, now);
-    const saved = await db.prepare(`UPDATE chats SET messages=?,title=? WHERE id=? AND owner=? AND messages=?
-        AND NOT EXISTS (SELECT 1 FROM jobs WHERE chat_id=? AND state IN ('queued','running'))`)
-        .bind(JSON.stringify(messages), title, chat.id, owner, chat.messages, chat.id).run();
+    const [saved] = await db.batch([
+        db.prepare(`UPDATE chats SET title=?,updated=MAX(updated+1,?) WHERE id=? AND owner=? AND updated=?
+            AND NOT EXISTS (SELECT 1 FROM jobs WHERE chat_id=? AND state IN ('queued','running'))`)
+            .bind(title, now, chat.id, owner, chat.updated, chat.id),
+        db.prepare('UPDATE chat_messages SET message=? WHERE chat_id=? AND position=? AND changes()=1')
+            .bind(JSON.stringify(edited), chat.id, index),
+        db.prepare(`DELETE FROM chat_memory WHERE chat_id=? AND (position>? OR (position=? AND offset>0)) AND changes()=1`)
+            .bind(chat.id, index, index),
+    ]);
     if (!saved.meta.changes) throw new HttpError(409, '聊天室有進行中的回覆或內容已更新，請稍後再試。');
-    return json({ messages, title });
+    return json({ message: edited, title });
 }
 
 async function chatRoute(request, env, path, owner, now) {
@@ -304,11 +384,11 @@ async function chatRoute(request, env, path, owner, now) {
             db.prepare('INSERT INTO chats (id,owner,title,updated) VALUES (?,?,?,?)').bind(id, owner, '新聊天', now),
             db.prepare('INSERT INTO chat_settings (chat_id,settings) VALUES (?,?)').bind(id, JSON.stringify(settings)),
         ]);
-        return json({ id, title: '新聊天', messages: [], settings }, 201);
+        return json({ id, title: '新聊天', messages: [], start: 0, before: null, settings }, 201);
     }
     const [, , , , id, section] = path.split('/');
     if (!idPattern.test(id)) throw new HttpError(404, '找不到聊天室。');
-    const chat = await db.prepare(`SELECT c.id,c.title,c.messages,COALESCE(s.settings,'{}') AS settings
+    const chat = await db.prepare(`SELECT c.id,c.title,c.updated,c.messages<>'[]' AS legacy,COALESCE(s.settings,'{}') AS settings
         FROM chats c LEFT JOIN chat_settings s ON c.id=s.chat_id WHERE c.id=? AND c.owner=?`).bind(id, owner).first();
     if (!chat) throw new HttpError(404, '找不到聊天室。');
     const roomSettings = JSON.parse(chat.settings);
@@ -321,18 +401,25 @@ async function chatRoute(request, env, path, owner, now) {
         if (!saved.meta.changes) throw new HttpError(409, '聊天室設定已更新，請重新開啟聊天室後再試。');
         return json({ settings });
     }
-    const messages = JSON.parse(chat.messages);
+    if (chat.legacy) await db.batch(migrateMessages(db, id, owner));
     if (section === 'edit') {
         if (request.method !== 'POST') throw new HttpError(405, '請使用 POST 編輯訊息。');
-        return editChatMessage(db, chat, messages, owner, now, await readJson(request));
+        return editChatMessage(db, chat, owner, now, await readJson(request));
     }
     if (request.method === 'GET') {
+        const params = new URL(request.url).searchParams;
+        if (params.has('before')) {
+            const before = Number(params.get('before'));
+            if (!Number.isSafeInteger(before) || before < 1) throw new HttpError(400, '聊天紀錄頁碼無效。');
+            return json(await readMessagePage(db, id, before));
+        }
         const job = await db.prepare(`SELECT id,state,error,expires FROM jobs WHERE chat_id=? AND owner=? ORDER BY created DESC LIMIT 1`).bind(id, owner).first();
         if (job && job.expires <= now && ['queued','running'].includes(job.state)) {
             job.state = 'failed';
             job.error = '等待模型逾時，請重新送出。';
         }
-        return json({ ...chat, messages, settings: roomSettings, job });
+        if (params.has('status')) return json({ job });
+        return json({ id, title: chat.title, ...await readMessagePage(db, id, Number.MAX_SAFE_INTEGER), settings: roomSettings, job });
     }
     const body = await readJson(request);
     let rewrite;
@@ -340,10 +427,10 @@ async function chatRoute(request, env, path, owner, now) {
     let retryOf;
     let userText;
     if (body.retry !== undefined) {
-        const reply = Number.isInteger(body.retry) && messages[body.retry];
+        const reply = await chatMessage(db, id, body.retry);
         if (reply?.role !== 'assistant') throw new HttpError(400, '找不到要重新回覆的訊息。');
         retryOf = reply.retryOf ?? body.retry;
-        const requestMessage = messages[body.retry - 1];
+        const requestMessage = await chatMessage(db, id, body.retry - 1);
         if (requestMessage?.role !== 'user') throw new HttpError(400, '找不到原本的提問。');
         selection = reply.rewrite;
         userText = requestMessage.content;
@@ -354,7 +441,7 @@ async function chatRoute(request, env, path, owner, now) {
     }
     if (selection !== undefined) {
         const { index, start, end, instruction } = selection || {};
-        const original = Number.isInteger(index) && messages[index];
+        const original = await chatMessage(db, id, index);
         try {
             rewrite = prepareRewrite(original?.role === 'assistant' ? original.content : undefined, selection);
         } catch (error) {
@@ -376,28 +463,46 @@ async function chatRoute(request, env, path, owner, now) {
     } catch (error) {
         throw new HttpError(400, error.message);
     }
-    if (messages.length >= 200) throw new HttpError(409, '這個聊天室已達訊息上限，請新增聊天。');
-    const history = [...messages, { role: 'user', content: userText }];
-    if (new TextEncoder().encode(JSON.stringify(history)).length > 512 * 1024) {
-        throw new HttpError(409, '這個聊天室已達容量上限，請新增聊天。');
-    }
-    const title = messages.length ? chat.title : userText.slice(0, 28);
+    const tail = await db.prepare('SELECT MAX(position) AS last FROM chat_messages WHERE chat_id=?').bind(id).first();
+    const position = tail.last === null ? 0 : tail.last + 1;
+    const userMessage = { role: 'user', content: userText };
+    const title = position ? chat.title : userText.slice(0, 28);
     const system = chatSystemMessage(settings.style, roomSettings.context);
-    const prompt = rewrite ? [
-        { role: 'system', content: [system, rewriteDirective].filter(Boolean).join('\n\n') },
-        { role: 'user', content: rewrite.prompt },
-    ] : (retryOf === undefined ? history : [...messages.slice(0, retryOf - 1), history.at(-1)]).slice(-12);
-    if (!rewrite && system) prompt.unshift({ role: 'system', content: system });
+    const prompt = [];
+    let context;
+    if (rewrite) {
+        prompt.push({ role: 'system', content: [system, rewriteDirective].filter(Boolean).join('\n\n') },
+            { role: 'user', content: rewrite.prompt });
+    } else {
+        const before = retryOf === undefined ? position : retryOf - 1;
+        const { recent, start } = recentPrompt(await messagePage(db, id, before, 40), before);
+        if (system) prompt.push({ role: 'system', content: system });
+        prompt.push(...recent, userMessage);
+        const checkpoint = await db.prepare('SELECT position,offset,summary FROM chat_memory WHERE chat_id=?').bind(id).first();
+        const memory = checkpoint && (checkpoint.position < before || (checkpoint.position === before && checkpoint.offset === 0))
+            ? checkpoint : null;
+        context = { start, memory };
+        if (retryOf === undefined && position > (memory?.position ?? 0)) {
+            const from = memory?.position ?? 0;
+            const { results } = await db.prepare(`SELECT message FROM chat_messages WHERE chat_id=? AND position>=?
+                ORDER BY position LIMIT 4`).bind(id, from).all();
+            context.archive = { start: from, offset: memory?.offset ?? 0,
+                messages: results.map(({ message }) => {
+                    const { role, content } = JSON.parse(message);
+                    return { role, content };
+                }) };
+        }
+    }
     const replacement = rewrite && { before: rewrite.before, after: rewrite.after };
     const job = crypto.randomUUID();
     const [queued] = await db.batch([
         db.prepare(`INSERT INTO jobs (id,owner,approval_id,chat_id,kind,input,created,expires)
             SELECT ?,owner,id,?,'chat',?,?,? FROM approvals WHERE id=? AND owner=? AND state='ready' AND expires>?
-            AND EXISTS (SELECT 1 FROM chats WHERE id=? AND owner=? AND messages=?)
+            AND EXISTS (SELECT 1 FROM chats WHERE id=? AND owner=? AND updated=?)
             ON CONFLICT DO NOTHING`)
-            .bind(job, id, JSON.stringify({ title, history, messages: prompt, parameters: settings.parameters,
-                rewrite: replacement, selection, retryOf }), now,
-                now + jobWindow, approval.id, owner, now, id, owner, chat.messages),
+            .bind(job, id, JSON.stringify({ title, position, userMessage, messages: prompt, parameters: settings.parameters,
+                rewrite: replacement, selection, retryOf, context }), now,
+                now + jobWindow, approval.id, owner, now, id, owner, chat.updated),
         db.prepare(`UPDATE approvals SET expires=MAX(expires,?) WHERE id=? AND EXISTS (SELECT 1 FROM jobs WHERE id=?)`)
             .bind(now + activityWindow, approval.id, job),
     ]);

@@ -2,6 +2,7 @@ import { access, readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { spawn } from 'node:child_process';
 import { setTimeout as wait } from 'node:timers/promises';
+import { ContextFull, prepareChat } from './memory.mjs';
 
 const states = new Set(['ready', 'sleeping', 'loading', 'stopped', 'error']);
 
@@ -20,6 +21,9 @@ export function validateConnectorConfig(settings, { allowHttpLoopback = false } 
         throw new Error('請填配對後取得的連接器金鑰。');
     }
     if (typeof settings.model !== 'string' || !settings.model.trim()) throw new Error('請填模型 ID。');
+    if (settings.summarizeHistory !== undefined && typeof settings.summarizeHistory !== 'boolean') {
+        throw new Error('summarizeHistory 請填 true 或 false。');
+    }
     for (const name of ['startScript', 'modelFile']) {
         if (settings[name] && (typeof settings[name] !== 'string' || !isAbsolute(settings[name]))) {
             throw new Error(`${name} 必須是本機絕對路徑。`);
@@ -41,6 +45,7 @@ export function createConnector(config, { fetcher = fetch, launch = launchScript
         return response.json();
     }
 
+    let contextSize = 4096;
     async function probe() {
         try {
             const health = await fetcher(`${config.modelUrl}/health`, { signal: AbortSignal.timeout(3000), redirect: 'error' });
@@ -48,10 +53,25 @@ export function createConnector(config, { fetcher = fetch, launch = launchScript
             if (!health.ok) return 'error';
             const props = await fetcher(`${config.modelUrl}/props`, { signal: AbortSignal.timeout(3000), redirect: 'error' });
             if (!props.ok) return 'error';
-            return (await props.json()).is_sleeping === true ? 'sleeping' : 'ready';
+            const properties = await props.json();
+            const size = properties.default_generation_settings?.n_ctx;
+            contextSize = Number.isSafeInteger(size) && size >= 256 ? size : 4096;
+            return properties.is_sleeping === true ? 'sleeping' : 'ready';
         } catch (error) {
             return error.cause?.code === 'ECONNREFUSED' ? 'stopped' : 'error';
         }
+    }
+
+    async function modelPost(path, body, timeout, deadline) {
+        const response = await fetcher(`${config.modelUrl}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(Math.max(1, Math.min(timeout, deadline - Date.now()))),
+            redirect: 'error',
+        });
+        if (!response.ok) throw new Error(`本機模型回傳 HTTP ${response.status}。`);
+        return response.json();
     }
 
     async function ensureModel(deadline) {
@@ -88,7 +108,7 @@ export function createConnector(config, { fetcher = fetch, launch = launchScript
         }
         pendingResult = undefined;
         const state = await probe();
-        const { job } = await site('poll', { state });
+        const { job } = await site('poll', { state, memory: true });
         if (!job) return;
         if (typeof job.id !== 'string' || typeof job.lease !== 'string' || !Number.isFinite(job.expires)) {
             throw new Error('網站傳回的工作格式錯誤。');
@@ -104,26 +124,44 @@ export function createConnector(config, { fetcher = fetch, launch = launchScript
                 pendingResult = { id: job.id, lease: job.lease, ok: true };
             } else {
                 if (!['ready', 'sleeping'].includes(state)) throw new Error('模型不在線，請重新送出使用請求。');
-                const { messages, parameters } = job.input || {};
+                const { messages, parameters, context } = job.input || {};
                 if (!Array.isArray(messages)) throw new Error('聊天工作沒有可用訊息。');
                 const allowed = ['temperature', 'top_p', 'max_tokens', 'frequency_penalty', 'presence_penalty'];
                 const fields = Object.fromEntries(allowed.filter(key => Number.isFinite(parameters?.[key]))
                     .map(key => [key, parameters[key]]));
-                const response = await fetcher(`${config.modelUrl}/v1/chat/completions`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...fields, messages, model: config.model, stream: false }),
-                    signal: AbortSignal.timeout(Math.max(1, Math.min(180_000, job.expires - Date.now()))),
-                    redirect: 'error',
+                const complete = async (prompt, generation, timeout) => {
+                    const response = await modelPost('/v1/chat/completions',
+                        { ...generation, messages: prompt, model: config.model, stream: false }, timeout, job.expires);
+                    const reply = response.choices?.[0]?.message?.content;
+                    if (typeof reply !== 'string' || !reply.trim()) throw new Error('模型未回傳文字。');
+                    return reply;
+                };
+                let canTokenize = true;
+                const count = async prompt => {
+                    if (canTokenize) {
+                        try {
+                            const { prompt: rendered } = await modelPost('/apply-template', { messages: prompt }, 4000, job.expires);
+                            if (typeof rendered !== 'string') throw new Error();
+                            const { tokens } = await modelPost('/tokenize',
+                                { content: rendered, add_special: true, parse_special: true }, 4000, job.expires);
+                            if (!Array.isArray(tokens)) throw new Error();
+                            return tokens.length;
+                        } catch {
+                            canTokenize = false;
+                        }
+                    }
+                    return prompt.reduce((sum, message) => sum + Buffer.byteLength(message.content) + 20, 0);
+                };
+                const fitted = await prepareChat({ messages, context }, {
+                    contextSize, maxReply: fields.max_tokens, count, complete,
+                    summarizeHistory: config.summarizeHistory !== false && job.expires - Date.now() > 60_000,
                 });
-                if (!response.ok) throw new Error(`本機模型回傳 HTTP ${response.status}。`);
-                const reply = (await response.json()).choices?.[0]?.message?.content;
-                if (typeof reply !== 'string' || !reply.trim()) throw new Error('模型未回傳文字。');
-                pendingResult = { id: job.id, lease: job.lease, ok: true, text: reply };
+                const reply = await complete(fitted.prompt, { ...fields, max_tokens: fitted.maxReply }, 180_000);
+                pendingResult = { id: job.id, lease: job.lease, ok: true, text: reply, memory: fitted.memory };
             }
         } catch (error) {
             console.error(error.message);
-            pendingResult = { id: job.id, lease: job.lease, ok: false };
+            pendingResult = { id: job.id, lease: job.lease, ok: false, contextFull: error instanceof ContextFull };
         }
         await site('result', pendingResult);
         pendingResult = undefined;

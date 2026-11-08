@@ -28,6 +28,12 @@ async function api(path, body) {
 export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloatingSidebar, isNarrow, renderAccount }) {
     const input = $('#message-input');
     const conversation = $('#conversation');
+    const loadEarlier = document.createElement('button');
+    loadEarlier.type = 'button';
+    loadEarlier.className = 'history-more';
+    loadEarlier.textContent = '載入更早的訊息';
+    loadEarlier.hidden = true;
+    conversation.querySelector('.conversation__intro').after(loadEarlier);
     const send = $('#send-button');
     const dialog = $('#utility-panel');
     const panelContent = $('#panel-content');
@@ -35,7 +41,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
     const chatStatus = $('#chat-status');
     let status;
     const rooms = new Map();
-    const emptyRoom = () => ({ id: null, title: '新聊天', messages: [], settings: {}, draft: '', notice: '' });
+    const emptyRoom = () => ({ id: null, title: '新聊天', messages: [], start: 0, before: null, settings: {}, draft: '', notice: '' });
     let room = emptyRoom();
     let selection = 0;
     let statusTimer;
@@ -141,13 +147,15 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         queueMicrotask(refreshStatus);
     }
 
-    function renderRoom(showNewest = false) {
+    function renderRoom(showNewest = false, anchor) {
         $('#chat-title').textContent = room.title;
         $$('#conversation .message').forEach(message => message.remove());
         $$('.chat-row').forEach(row => row.classList.toggle('is-active', row.dataset.chatId === room.id));
+        loadEarlier.hidden = room.before === null;
+        loadEarlier.disabled = !!(room.loadingEarlier || room.busy);
         for (const [index, message] of room.messages.entries()) {
             const article = addMessage(message.content, message.role);
-            article.dataset.messageIndex = String(index);
+            article.dataset.messageIndex = String(room.start + index);
             const author = article.querySelector('.message__identity strong');
             if (author) author.textContent = status.model;
             if (message.rewrite) article.querySelector('.message__identity small').textContent = '改寫後全文';
@@ -160,12 +168,42 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         resizeInput();
         input.readOnly = send.disabled = !!room.busy;
         chatStatus.textContent = room.notice;
+        if (anchor) {
+            const article = conversation.querySelector(`[data-message-index="${anchor.index}"]`);
+            if (article) {
+                conversation.scrollTo({ top: conversation.scrollTop + article.getBoundingClientRect().top - anchor.top, behavior: 'instant' });
+                return;
+            }
+        }
         const newest = showNewest && conversation.querySelector('.message--assistant:last-of-type');
         const top = newest
             ? conversation.scrollTop + newest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 12
             : conversation.scrollHeight;
         conversation.scrollTo({ top, behavior: 'instant' });
     }
+
+    loadEarlier.onclick = async () => {
+        const target = room;
+        const cursor = target.before;
+        if (cursor === null || target.busy || target.loadingEarlier) return;
+        target.loadingEarlier = loadEarlier.disabled = true;
+        try {
+            const page = await api(`/chats/${target.id}?before=${cursor}`);
+            if (target.before !== cursor || !page.messages.length) return;
+            const first = target === room && conversation.querySelector(`[data-message-index="${cursor}"]`);
+            const anchor = first ? { index: cursor, top: first.getBoundingClientRect().top } : undefined;
+            if (target === room) target.draft = input.value;
+            target.messages = [...page.messages, ...target.messages];
+            target.start = page.start;
+            target.before = page.before;
+            if (target === room) renderRoom(false, anchor);
+        } catch (error) {
+            if (target === room) chatStatus.textContent = error.message;
+        } finally {
+            target.loadingEarlier = false;
+            if (target === room) loadEarlier.disabled = !!target.busy;
+        }
+    };
 
     function activateRoom(next) {
         if (!room.busy) room.draft = input.value;
@@ -256,8 +294,9 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         if (!target.id || target.busy || target.saving) throw new Error('請等目前的操作完成後再編輯。');
         target.saving = true;
         try {
-            const { messages, title } = await api(`/chats/${target.id}/edit`, { index, original, text });
-            target.messages = messages;
+            const { message, title } = await api(`/chats/${target.id}/edit`, { index, original, text });
+            const localIndex = index - target.start;
+            if (localIndex >= 0 && localIndex < target.messages.length) target.messages[localIndex] = message;
             target.title = title;
             if (target === room) $('#chat-title').textContent = title;
             const row = $(`.chat-row[data-chat-id="${target.id}"]`);
@@ -265,7 +304,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
                 row.dataset.title = title;
                 row.querySelector('span').textContent = title;
             }
-            return messages[index].content;
+            return message.content;
         } finally {
             target.saving = false;
         }
@@ -282,6 +321,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         target.busy = true;
         target.draft = input.value;
         send.disabled = true;
+        loadEarlier.disabled = true;
         input.readOnly = true;
         let completed = false;
         try {
@@ -303,12 +343,20 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             const deadline = Date.now() + 305_000;
             while (Date.now() < deadline) {
                 await new Promise(resolve => setTimeout(resolve, 1100));
+                const { job: result } = await api(`${path}?status=1`);
+                if (result?.id !== job) throw new Error('工作狀態已變更，請重新開啟聊天室。');
+                if (result.state === 'failed') throw new Error(result.error);
+                if (result.state !== 'done') continue;
                 const chat = await api(path);
-                if (chat.job?.id !== job) throw new Error('工作狀態已變更，請重新開啟聊天室。');
-                if (chat.job.state === 'failed') throw new Error(chat.job.error);
-                if (chat.job.state !== 'done') continue;
                 target.title = chat.title;
-                target.messages = chat.messages;
+                const overlap = chat.start - target.start;
+                if (overlap > 0 && overlap <= target.messages.length) {
+                    target.messages = [...target.messages.slice(0, overlap), ...chat.messages];
+                } else {
+                    target.messages = chat.messages;
+                    target.start = chat.start;
+                    target.before = chat.before;
+                }
                 if (!rewriting && !retrying) target.draft = '';
                 target.notice = '';
                 completed = true;

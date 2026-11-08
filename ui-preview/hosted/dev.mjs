@@ -4,6 +4,7 @@ import { createLocalDb } from './sqlite.mjs';
 import { createConnector } from './connector.mjs';
 import worker from './worker.mjs';
 import { rewriteDirective } from '../generation-settings.mjs';
+import { summaryInstruction } from './memory.mjs';
 
 const port = Number(process.env.TAVERN_DEV_PORT || 8121);
 const origin = `http://127.0.0.1:${port}`;
@@ -101,11 +102,16 @@ const connector = createConnector({ site: origin, model: 'f451-writer',
         if (target.origin === origin) return fetch(url, options);
         if (!modelStarted) throw new Error('offline', { cause: { code: 'ECONNREFUSED' } });
         if (target.pathname === '/health') return Response.json({ status: 'ok' });
-        if (target.pathname === '/props') return Response.json({ is_sleeping: false });
+        if (target.pathname === '/props') return Response.json({ is_sleeping: false, default_generation_settings: { n_ctx: 4096 } });
         if (target.pathname === '/v1/models') return Response.json({ data: [{ id: 'f451-writer' }] });
+        if (target.pathname === '/apply-template') return Response.json({ prompt: options.body });
+        if (target.pathname === '/tokenize') {
+            return Response.json({ tokens: Array(Math.ceil(JSON.parse(options.body).content.length / 3)).fill(0) });
+        }
         const { messages } = JSON.parse(options.body);
         const input = messages.at(-1).content;
         let content = `假模型回覆：${input}`;
+        if (messages[0]?.content === summaryInstruction) content = '模擬模型已整理較早的對話。';
         if (messages[0]?.role === 'system' && messages[0].content.endsWith(rewriteDirective)) {
             try {
                 const { selected } = JSON.parse(input);
