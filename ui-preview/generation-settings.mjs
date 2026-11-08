@@ -57,6 +57,7 @@ export function chatSystemMessage(style, context = {}) {
 }
 
 export const rewriteInstructionLimit = 1000;
+export const rewriteRequestPrefix = '改寫選取文字：';
 export const rewriteDirective = '依照改寫要求，只改寫 selected 欄位。before 和 after 是參考上下文。只輸出改寫後的片段，直接寫正文。';
 
 export function prepareRewrite(source, selection) {

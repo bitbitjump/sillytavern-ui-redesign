@@ -8,24 +8,13 @@ import { rewriteDirective } from '../generation-settings.mjs';
 const port = Number(process.env.TAVERN_DEV_PORT || 8121);
 const origin = `http://127.0.0.1:${port}`;
 const browserAccounts = ['alice', 'bob'];
-const approver = '111111111111111111';
-const keys = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
-const toHex = buffer => Buffer.from(buffer).toString('hex');
-let lastNotification;
 let modelStarted = false;
 const token = crypto.randomUUID();
 const env = {
     DB: createLocalDb(process.env.TAVERN_DEV_DB),
     TAVERN_ALLOWED_EMAILS: 'alice@example.test,bob@example.test',
+    TAVERN_APPROVER_EMAIL: 'bob@example.test',
     TAVERN_CONNECTOR_TOKEN: token,
-    DISCORD_APPROVER_ID: approver,
-    DISCORD_BOT_TOKEN: 'development-stub',
-    DISCORD_PUBLIC_KEY: toHex(await crypto.subtle.exportKey('raw', keys.publicKey)),
-    DISCORD_FETCH: async (url, options) => {
-        if (url.endsWith('/users/@me/channels')) return Response.json({ id: '222222222222222222' });
-        lastNotification = JSON.parse(options.body).components[0].components[0].custom_id;
-        return Response.json({ id: '333333333333333333' });
-    },
     ASSETS: { fetch: assetResponse },
 };
 
@@ -53,18 +42,6 @@ async function assetResponse(request) {
     return new Response(bytes, { headers: { 'Content-Type': file[1], 'Cache-Control': 'no-store' } });
 }
 
-async function signedApproval() {
-    if (!lastNotification) return Response.json({ error: '請先送出使用請求。' }, { status: 409 });
-    const timestamp = String(Math.floor(Date.now() / 1000));
-    const body = JSON.stringify({ type: 3, user: { id: approver }, data: { custom_id: lastNotification } });
-    const signature = await crypto.subtle.sign('Ed25519', keys.privateKey, new TextEncoder().encode(timestamp + body));
-    return worker.fetch(new Request(`${origin}/api/discord/interactions`, {
-        method: 'POST',
-        headers: { 'X-Signature-Ed25519': toHex(signature), 'X-Signature-Timestamp': timestamp },
-        body,
-    }), env);
-}
-
 async function devRoute(request) {
     const path = new URL(request.url).pathname;
     if (path === '/_test/signin' && request.method === 'GET') {
@@ -78,7 +55,6 @@ async function devRoute(request) {
     if (request.method !== 'POST' || request.headers.get('Origin') !== origin) {
         return new Response('Forbidden', { status: 403 });
     }
-    if (path === '/_test/approve') return signedApproval();
     if (path === '/_test/session') {
         const value = (await request.formData()).get('account');
         if (browserAccounts.includes(value)) {

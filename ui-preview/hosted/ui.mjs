@@ -1,9 +1,12 @@
+import { rewriteRequestPrefix } from '../generation-settings.mjs';
+
 const approvalLabels = {
     pending: '等朋友按 Discord OK',
     approved: '已批准，等 Mac 準備模型',
     ready: '已批准，可以開始聊天',
     failed: '請求未完成',
     expired: '使用權已到期',
+    rejected: '模型管理員已拒絕這次申請',
 };
 const modelLabels = {
     offline: 'Mac 未連線', stopped: '模型服務已停', loading: '正在載入',
@@ -48,10 +51,10 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             $('#connection-status span').textContent = modelLabels[status.state];
             if (modelPanelOpen()) {
                 $('#hosted-model-state').textContent = modelLabels[status.state];
-                $('#hosted-approval-state').textContent = approvalLabels[phase] || '尚未送出使用請求';
+                $('#hosted-approval-state').textContent = phase === 'pending' && status.approvalChannel === 'web'
+                    ? '等待模型管理員在酒館同意' : approvalLabels[phase] || '尚未送出使用請求';
                 $('#request-model').disabled = ['pending', 'approved', 'ready'].includes(phase);
-                const simulate = $('#simulate-approval');
-                if (simulate) simulate.disabled = phase !== 'pending';
+                if (status.canApprove) await refreshApprovalQueue(renderedModelPanel);
             }
         } catch (error) {
             if (modelPanelOpen()) panelStatus.textContent = error.message;
@@ -60,6 +63,52 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
                 && (modelPanelOpen() || ['pending', 'approved'].includes(status.approval?.state))) {
                 statusTimer = setTimeout(refreshStatus, 2500);
             }
+        }
+    }
+
+    async function refreshApprovalQueue(modelPanel) {
+        const list = modelPanel.querySelector('#approval-queue');
+        if (!list) return;
+        const { requests } = await api('/approvals');
+        if (!dialog.open || !list.isConnected) return;
+        const ids = requests.map(request => request.id).join(',');
+        if (list.dataset.requestIds === ids) return;
+        list.dataset.requestIds = ids;
+        list.replaceChildren();
+        if (!requests.length) {
+            list.textContent = '目前沒有待處理的申請。';
+            return;
+        }
+        for (const request of requests) {
+            const row = document.createElement('div');
+            row.className = 'model-approval-row';
+            row.innerHTML = `
+                <p></p>
+                <div class="generation-actions">
+                    <button type="button" value="reject">拒絕</button>
+                    <button type="button" value="approve">同意使用</button>
+                </div>`;
+            const reference = request.id.slice(0, 8);
+            row.querySelector('p').textContent = request.name ? `${request.name} · #${reference}` : `申請 #${reference}`;
+            const buttons = row.querySelectorAll('button');
+            for (const button of buttons) {
+                button.onclick = async () => {
+                    for (const control of buttons) control.disabled = true;
+                    panelStatus.textContent = '';
+                    try {
+                        await api(`/approvals/${request.id}`, { decision: button.value });
+                        if (dialog.open && list.isConnected) {
+                            panelStatus.textContent = button.value === 'approve' ? '已同意使用。' : '已拒絕申請。';
+                        }
+                    } catch (error) {
+                        if (dialog.open && list.isConnected) panelStatus.textContent = error.message;
+                    } finally {
+                        for (const control of buttons) control.disabled = false;
+                        await refreshStatus();
+                    }
+                };
+            }
+            list.append(row);
         }
     }
 
@@ -74,8 +123,8 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
                     <span id="hosted-model-state"></span> · <span id="hosted-approval-state"></span></p>
                 <div class="generation-actions">
                     <button type="button" id="request-model" disabled>送出使用請求</button>
-                    ${testMode ? '<button type="button" id="simulate-approval" disabled>模擬朋友按 OK</button>' : ''}
                 </div>
+                ${status.canApprove ? '<section class="model-approval"><h3>待處理的模型申請</h3><div id="approval-queue" aria-live="polite"></div></section>' : ''}
             </div>`;
         renderedModelPanel = $('#hosted-model-panel');
         $('#hosted-model-name').textContent = status.model;
@@ -89,11 +138,6 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             }
             await refreshStatus();
         };
-        if (testMode) $('#simulate-approval').onclick = async () => {
-            const response = await fetch('/_test/approve', { method: 'POST' });
-            if (!response.ok) panelStatus.textContent = '模擬批准失敗。';
-            await refreshStatus();
-        };
         queueMicrotask(refreshStatus);
     }
 
@@ -104,13 +148,12 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         for (const [index, message] of room.messages.entries()) {
             const article = addMessage(message.content, message.role);
             article.dataset.messageIndex = String(index);
-            article.querySelector('[data-action="edit"]')?.remove();
             const author = article.querySelector('.message__identity strong');
             if (author) author.textContent = status.model;
             if (message.rewrite) article.querySelector('.message__identity small').textContent = '改寫後全文';
             if (message.role === 'assistant' && !message.rewrite
-                && room.messages[index - 1]?.content.startsWith('改寫選取文字：')) {
-                article.dataset.legacyRewrite = room.messages[index - 1].content.slice('改寫選取文字：'.length);
+                && room.messages[index - 1]?.content.startsWith(rewriteRequestPrefix)) {
+                article.dataset.legacyRewrite = 'true';
             }
         }
         input.value = room.draft;
@@ -208,6 +251,26 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         }
     }
 
+    async function editMessage(index, original, text) {
+        const target = room;
+        if (!target.id || target.busy || target.saving) throw new Error('請等目前的操作完成後再編輯。');
+        target.saving = true;
+        try {
+            const { messages, title } = await api(`/chats/${target.id}/edit`, { index, original, text });
+            target.messages = messages;
+            target.title = title;
+            if (target === room) $('#chat-title').textContent = title;
+            const row = $(`.chat-row[data-chat-id="${target.id}"]`);
+            if (row) {
+                row.dataset.title = title;
+                row.querySelector('span').textContent = title;
+            }
+            return messages[index].content;
+        } finally {
+            target.saving = false;
+        }
+    }
+
     async function queueMessage(payload) {
         const rewriting = Object.hasOwn(payload, 'rewrite');
         const retrying = Object.hasOwn(payload, 'retry');
@@ -277,7 +340,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
             status = await api('/status');
             $('#current-model').textContent = status.model;
             $('#chat-title').textContent = '新聊天';
-            $('.conversation__intro p').textContent = testMode ? '本機整合測試 · Discord 與模型皆為模擬' : '在「模型」送出使用請求。';
+            $('.conversation__intro p').textContent = testMode ? '本機整合測試 · 使用模擬模型' : '在「模型」送出使用請求。';
             input.placeholder = '輸入訊息';
             const chats = await refreshChats();
             if (chats[0] && selection === 0) {
@@ -295,7 +358,7 @@ export function createHostedUi({ addMessage, resizeInput, openPanel, closeFloati
         }
     }
 
-    return { init, modelPanel, newChat, getSettings, saveSettings,
+    return { init, modelPanel, newChat, getSettings, saveSettings, editMessage,
         sendMessage: text => queueMessage({ text }),
         rewriteMessage: rewrite => queueMessage({ rewrite }),
         retryMessage: retry => queueMessage({ retry }),

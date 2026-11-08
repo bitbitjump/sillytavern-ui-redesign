@@ -211,9 +211,64 @@ try {
     assert.equal(retriedChat.messages[1].content, 'model answer');
     assert.equal(retriedChat.messages.at(-1).content, '新回覆');
 
+    const editPath = `${chatPath}/edit`;
+    const edit = { index: 0, original: 'Alice private test', text: '編輯後的提問' };
+    assert.equal((await call(editPath, { ...bob, body: edit })).status, 404);
+    assert.equal((await call(editPath, { ...alice, body: { index: 1, original: 'model answer', text: '改 AI 文字' } })).status, 400);
+    const editedChat = await (await call(editPath, { ...alice, body: edit })).json();
+    assert.equal(editedChat.title, edit.text);
+    assert.equal(editedChat.messages[0].content, edit.text);
+    assert.deepEqual(editedChat.messages.slice(1), retriedChat.messages.slice(1));
+    assert.equal((await call(editPath, { ...alice, body: edit })).status, 409);
+    assert.equal((await call(chatPath, { ...alice, body: { retry: 1 } })).status, 202);
+    assert.equal((await call(editPath, { ...alice, body: { ...edit, original: edit.text } })).status, 409);
+    await mac.step();
+    assert.equal(upstreamRequest.messages.at(-1).content, edit.text);
+
+    const rewriteEdit = { index: 6, original: retriedRewrite.messages[6].content, text: '改成第三種語氣' };
+    const editedRewrite = await (await call(editPath, { ...alice, body: rewriteEdit })).json();
+    assert.equal(editedRewrite.messages[6].content, `改寫選取文字：${rewriteEdit.text}`);
+    assert.equal((await call(chatPath, { ...alice, body: { retry: 7 } })).status, 202);
+    await mac.step();
+    const retryInput = JSON.parse(upstreamRequest.messages.at(-1).content);
+    assert.equal(retryInput.instruction, rewriteEdit.text);
+    assert.equal(retryInput.selected, '只改這句');
+
     db.prepare('UPDATE approvals SET expires=0 WHERE id=?').bind(approval.id).run();
     assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'expired');
+    const finalEdit = { ...edit, original: edit.text, text: '未連線時也可儲存' };
+    assert.equal((await call(editPath, { ...alice, body: finalEdit })).status, 200);
+    assert.equal((await (await call(chatPath, alice)).json()).messages[0].content, finalEdit.text);
     assert.equal((await call(chatPath, { ...alice, body: { text: 'after timeout' } })).status, 409);
+
+    env.TAVERN_APPROVER_EMAIL = 'Bob@example.test';
+    db.prepare('UPDATE approvals SET created=0 WHERE owner=?').bind(alice.user).run();
+    const requested = await (await call('/api/tavern/request', { ...alice, body: {} })).json();
+    const requestId = requested.approval.id;
+    assert.equal(requested.approval.state, 'pending');
+    const waiting = await (await call('/api/tavern/status', alice)).json();
+    assert.equal(waiting.approvalChannel, 'web');
+    assert.equal(waiting.canApprove, false);
+    assert.equal((await (await call('/api/tavern/status', bob)).json()).canApprove, true);
+    assert.equal((await call('/api/tavern/approvals', alice)).status, 403);
+    const approvals = await (await call('/api/tavern/approvals', bob)).json();
+    assert.equal(approvals.requests[0].id, requestId);
+    const decisionPath = `/api/tavern/approvals/${requestId}`;
+    assert.equal((await call(decisionPath, { ...alice, body: { decision: 'approve' } })).status, 403);
+    assert.equal((await call(decisionPath, { ...bob, origin: 'https://other.test', body: { decision: 'approve' } })).status, 403);
+    assert.equal((await approve(`tavern:approve:${requestId}`)).status, 401);
+    assert.equal((await call(decisionPath, { ...bob, body: { decision: 'reject' } })).status, 200);
+    assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'rejected');
+    assert.equal((await call(decisionPath, { ...bob, body: { decision: 'approve' } })).status, 409);
+
+    db.prepare('UPDATE approvals SET created=0 WHERE owner=?').bind(alice.user).run();
+    const next = await (await call('/api/tavern/request', { ...alice, body: {} })).json();
+    const nextPath = `/api/tavern/approvals/${next.approval.id}`;
+    assert.equal((await call(nextPath, { ...bob, body: { decision: 'approve' } })).status, 200);
+    await mac.step();
+    assert.equal((await (await call('/api/tavern/status', alice)).json()).approval.state, 'ready');
+    assert.deepEqual((await (await call('/api/tavern/approvals', bob)).json()).requests, []);
+    assert.equal(notifications.length, 1);
     console.log('通過：帳號與聊天室隔離、獨立世界觀和生成設定、批准者驗證、避免重複啟動、閒置重載、過期重新申請。');
 } finally {
     db.close();

@@ -1,4 +1,5 @@
-import { chatSystemMessage, prepareRewrite, rewriteDirective, validateChatContext, validateGenerationSettings } from '../generation-settings.mjs';
+import { chatSystemMessage, prepareRewrite, rewriteDirective, rewriteInstructionLimit, rewriteRequestPrefix,
+    validateChatContext, validateGenerationSettings } from '../generation-settings.mjs';
 
 const minute = 60_000;
 const approvalWindow = 15 * minute;
@@ -65,6 +66,15 @@ function identity(request, env) {
     return owner;
 }
 
+function webApproverEmail(env) {
+    return env.TAVERN_APPROVER_EMAIL?.trim().toLowerCase();
+}
+
+function canApproveOnSite(request, env) {
+    const approver = webApproverEmail(env);
+    return !!approver && request.headers.get('oai-authenticated-user-email')?.toLowerCase() === approver;
+}
+
 async function tokenMatches(request, env) {
     const token = env.TAVERN_CONNECTOR_TOKEN;
     const header = request.headers.get('Authorization') || '';
@@ -124,15 +134,39 @@ async function discordInteraction(request, env, now) {
     if (event.type !== 3 || !id || event.guild_id || event.user?.id !== env.DISCORD_APPROVER_ID) {
         return json({ type: 4, data: { content: '這個請求無法由此帳號批准。', flags: 64 } });
     }
-    const [changed] = await env.DB.batch([
-        env.DB.prepare(`UPDATE approvals SET state='approved', expires=? WHERE id=? AND state='pending' AND expires>?`)
+    const approved = await approveRequest(env.DB, id, now);
+    return json({ type: 7, data: { content: approved
+        ? '已批准。酒館會在 Mac 連線後準備模型。' : '這則請求已處理或失效。', components: [] } });
+}
+
+async function approveRequest(db, id, now) {
+    const [changed] = await db.batch([
+        db.prepare(`UPDATE approvals SET state='approved', expires=? WHERE id=? AND state='pending' AND expires>?`)
             .bind(now + approvalWindow, id, now),
-        env.DB.prepare(`INSERT INTO jobs (id,owner,approval_id,kind,created,expires)
+        db.prepare(`INSERT INTO jobs (id,owner,approval_id,kind,created,expires)
             SELECT id,owner,id,'prepare',?,? FROM approvals WHERE id=? AND state='approved' AND expires>?
             ON CONFLICT(id) DO NOTHING`).bind(now, now + approvalWindow, id, now),
     ]);
-    return json({ type: 7, data: { content: changed.meta.changes
-        ? '已批准。酒館會在 Mac 連線後準備模型。' : '這則請求已處理或失效。', components: [] } });
+    return !!changed.meta.changes;
+}
+
+async function webApprovals(request, env, path, now) {
+    if (!canApproveOnSite(request, env)) throw new HttpError(403, '只有模型管理員能處理使用申請。');
+    const db = env.DB;
+    if (request.method === 'GET') {
+        const { results } = await db.prepare(`SELECT a.id,a.created,p.display_name AS name
+            FROM approvals a LEFT JOIN account_profiles p ON p.owner=a.owner
+            WHERE a.state='pending' AND a.expires>? ORDER BY a.created LIMIT 30`).bind(now).all();
+        return json({ requests: results });
+    }
+    const id = path.split('/').at(-1);
+    const { decision } = await readJson(request);
+    if (decision !== 'approve' && decision !== 'reject') throw new HttpError(400, '請選擇同意或拒絕。');
+    const changed = decision === 'approve' ? await approveRequest(db, id, now)
+        : (await db.prepare(`UPDATE approvals SET state='rejected' WHERE id=? AND state='pending' AND expires>?`)
+            .bind(id, now).run()).meta.changes;
+    if (!changed) throw new HttpError(409, '這則申請已處理或失效。');
+    return json({ ok: true });
 }
 
 async function cleanExpired(db, now) {
@@ -208,11 +242,13 @@ async function requestAccess(env, owner, now) {
         (SELECT 1 FROM approvals WHERE owner=? AND ((state IN ('pending','approved','ready') AND expires>?) OR created>?))`)
         .bind(id, owner, now, now + approvalWindow, owner, now, now - minute).run();
     if (!inserted.meta.changes) return json({ approval: await latestApproval(db, owner, now) });
-    try {
-        await sendDiscordApproval(env, id);
-    } catch {
-        await db.prepare(`UPDATE approvals SET state='failed' WHERE id=? AND state='pending'`).bind(id).run();
-        throw new HttpError(502, '無法送出 Discord 私訊。請稍後再試。');
+    if (!webApproverEmail(env)) {
+        try {
+            await sendDiscordApproval(env, id);
+        } catch {
+            await db.prepare(`UPDATE approvals SET state='failed' WHERE id=? AND state='pending'`).bind(id).run();
+            throw new HttpError(502, '無法送出 Discord 私訊。請稍後再試。');
+        }
     }
     return json({ approval: { id, state: 'pending', expires: now + approvalWindow } }, 201);
 }
@@ -232,6 +268,26 @@ function validateRoomSettings(patch, previous = {}) {
     } catch (error) {
         throw new HttpError(400, error.message);
     }
+}
+
+async function editChatMessage(db, chat, messages, owner, now, { index, original, text }) {
+    const message = Number.isInteger(index) && messages[index];
+    if (message?.role !== 'user') throw new HttpError(400, '只能編輯自己送出的訊息。');
+    if (message.content !== original) throw new HttpError(409, '訊息已更新，請重新開啟聊天室後再試。');
+    const rewrite = original.startsWith(rewriteRequestPrefix);
+    const limit = rewrite ? rewriteInstructionLimit : 8000;
+    if (typeof text !== 'string' || !text.trim() || text.length > limit) {
+        throw new HttpError(400, `請輸入 1 到 ${limit} 字的訊息。`);
+    }
+    const content = rewrite ? rewriteRequestPrefix + text.trim() : text.trim();
+    messages[index] = { ...message, content };
+    const title = index === 0 && chat.title === original.slice(0, 28) ? content.slice(0, 28) : chat.title;
+    await cleanExpired(db, now);
+    const saved = await db.prepare(`UPDATE chats SET messages=?,title=? WHERE id=? AND owner=? AND messages=?
+        AND NOT EXISTS (SELECT 1 FROM jobs WHERE chat_id=? AND state IN ('queued','running'))`)
+        .bind(JSON.stringify(messages), title, chat.id, owner, chat.messages, chat.id).run();
+    if (!saved.meta.changes) throw new HttpError(409, '聊天室有進行中的回覆或內容已更新，請稍後再試。');
+    return json({ messages, title });
 }
 
 async function chatRoute(request, env, path, owner, now) {
@@ -266,6 +322,10 @@ async function chatRoute(request, env, path, owner, now) {
         return json({ settings });
     }
     const messages = JSON.parse(chat.messages);
+    if (section === 'edit') {
+        if (request.method !== 'POST') throw new HttpError(405, '請使用 POST 編輯訊息。');
+        return editChatMessage(db, chat, messages, owner, now, await readJson(request));
+    }
     if (request.method === 'GET') {
         const job = await db.prepare(`SELECT id,state,error,expires FROM jobs WHERE chat_id=? AND owner=? ORDER BY created DESC LIMIT 1`).bind(id, owner).first();
         if (job && job.expires <= now && ['queued','running'].includes(job.state)) {
@@ -283,12 +343,13 @@ async function chatRoute(request, env, path, owner, now) {
         const reply = Number.isInteger(body.retry) && messages[body.retry];
         if (reply?.role !== 'assistant') throw new HttpError(400, '找不到要重新回覆的訊息。');
         retryOf = reply.retryOf ?? body.retry;
-        const requestMessage = messages[retryOf - 1];
+        const requestMessage = messages[body.retry - 1];
         if (requestMessage?.role !== 'user') throw new HttpError(400, '找不到原本的提問。');
-        selection = messages[retryOf].rewrite;
+        selection = reply.rewrite;
         userText = requestMessage.content;
-        if (!selection && userText.startsWith('改寫選取文字：')) {
-            throw new HttpError(409, '請重新選取文字後再改寫。');
+        if (userText.startsWith(rewriteRequestPrefix)) {
+            if (!selection) throw new HttpError(409, '請重新選取文字後再改寫。');
+            selection = { ...selection, instruction: userText.slice(rewriteRequestPrefix.length) };
         }
     }
     if (selection !== undefined) {
@@ -300,7 +361,7 @@ async function chatRoute(request, env, path, owner, now) {
             throw new HttpError(400, error.message);
         }
         selection = { index, start, end, instruction: instruction.trim() };
-        userText = `改寫選取文字：${selection.instruction}`;
+        userText = rewriteRequestPrefix + selection.instruction;
     } else if (retryOf === undefined && typeof body.text === 'string' && body.text.trim() && body.text.length <= 8000) {
         userText = body.text.trim();
     } else if (retryOf === undefined) {
@@ -325,7 +386,7 @@ async function chatRoute(request, env, path, owner, now) {
     const prompt = rewrite ? [
         { role: 'system', content: [system, rewriteDirective].filter(Boolean).join('\n\n') },
         { role: 'user', content: rewrite.prompt },
-    ] : (retryOf === undefined ? history : messages.slice(0, retryOf)).slice(-12);
+    ] : (retryOf === undefined ? history : [...messages.slice(0, retryOf - 1), history.at(-1)]).slice(-12);
     if (!rewrite && system) prompt.unshift({ role: 'system', content: system });
     const replacement = rewrite && { before: rewrite.before, after: rewrite.after };
     const job = crypto.randomUUID();
@@ -399,7 +460,9 @@ export async function handleTavernApi(request, env) {
             return await accountRoute(request, env);
         }
         if (!env.DB) throw new HttpError(503, '網站的模型服務尚未設定。');
-        if (request.method === 'POST' && path === '/api/discord/interactions') return await discordInteraction(request, env, now);
+        if (request.method === 'POST' && path === '/api/discord/interactions' && !webApproverEmail(env)) {
+            return await discordInteraction(request, env, now);
+        }
         if (request.method === 'POST' && path.startsWith('/api/connector/')) return await connector(request, env, path, now);
         const owner = identity(request, env);
         if (request.method === 'POST') requireSameOrigin(request);
@@ -407,10 +470,16 @@ export async function handleTavernApi(request, env) {
             const model = await env.DB.prepare('SELECT state,seen FROM model_status WHERE id=1').first();
             return json({ model: env.TAVERN_MODEL_ID || 'f451-writer',
                 state: model && now - model.seen < 30_000 ? model.state : 'offline',
+                approvalChannel: webApproverEmail(env) ? 'web' : 'discord',
+                canApprove: canApproveOnSite(request, env),
                 approval: await latestApproval(env.DB, owner, now) });
         }
         if (request.method === 'POST' && path === '/api/tavern/request') return await requestAccess(env, owner, now);
-        if (['GET', 'POST'].includes(request.method) && /^\/api\/tavern\/chats(?:\/[^/]+(?:\/settings)?)?$/.test(path)) {
+        if ((request.method === 'GET' && path === '/api/tavern/approvals')
+            || (request.method === 'POST' && /^\/api\/tavern\/approvals\/[a-f0-9-]{36}$/.test(path))) {
+            return await webApprovals(request, env, path, now);
+        }
+        if (['GET', 'POST'].includes(request.method) && /^\/api\/tavern\/chats(?:\/[^/]+(?:\/(?:settings|edit))?)?$/.test(path)) {
             return await chatRoute(request, env, path, owner, now);
         }
         throw new HttpError(404, '找不到端點。');

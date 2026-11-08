@@ -208,7 +208,17 @@
   background: var(--surface);
   color: var(--text);
 }
-.message-actions > :is(.copy-reply, .rewrite-reply, .retry-reply) span { display: inline; }
+.message-actions > button[data-action] {
+  width: 34px;
+  height: 34px;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+}
+.message--user .message-actions { opacity: 1; }
+.message-edit-form { width: min(100%, 660px); }
+.message-edit-form .message-editor { display: block; width: 100%; }
+.message-edit-form .chat-status { padding: 6px 0 0; }
 .rewrite-range { display: grid; gap: 10px; }
 .rewrite-range select { min-width: 0; }
 .rewrite-excerpt {
@@ -259,6 +269,12 @@
   cursor: pointer;
 }
 .generation-actions button[type="submit"] { background: var(--accent); color: var(--ink); }
+.model-approval { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+.model-approval h3 { margin: 0 0 8px; font-size: 15px; }
+.model-approval #approval-queue { color: var(--muted2); font-size: 13px; }
+.model-approval-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.model-approval-row p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.model-approval-row button { min-height: 44px; }
 .sidebar { max-height: 100dvh; }
 .sidebar__account {
   flex: none;
@@ -388,6 +404,8 @@
   .utility-panel[data-view="rewrite"] :is(select, textarea) { font-size: 16px; }
   .utility-panel[data-view="rewrite"] button[type="submit"] { min-height: 44px; }
   .rewrite-excerpt { max-height: 100px; }
-  .message-actions > :is(.copy-reply, .rewrite-reply, .retry-reply) { min-height: 44px; }
+  .message-actions > button[data-action] { width: 44px; height: 44px; }
+  .message-edit-form .edit-controls button { min-height: 44px; }
+  .message-edit-form .message-editor { font-size: 16px; }
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important}}

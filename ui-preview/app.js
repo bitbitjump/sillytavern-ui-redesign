@@ -1,4 +1,5 @@
-import { chatContextLimit, generationParameters, replyStyles, rewriteInstructionLimit, validateChatContext, validateGenerationSettings } from './generation-settings.mjs';
+import { chatContextLimit, generationParameters, replyStyles, rewriteInstructionLimit, rewriteRequestPrefix,
+  validateChatContext, validateGenerationSettings } from './generation-settings.mjs';
 
 (() => {
   'use strict';
@@ -755,7 +756,7 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
       if (hosted) {
         hostedUi.rewriteMessage({ ...range, index: Number(article.dataset.messageIndex) });
       } else {
-        const request = { role: 'user', content: `改寫選取文字：${instruction}` };
+        const request = { role: 'user', content: rewriteRequestPrefix + instruction };
         runLocalGeneration([request], reply => {
           addMessage(request.content, 'user');
           addMessage(reply, 'assistant');
@@ -774,19 +775,68 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
 
   function editMessage(article) {
     if (generating || $('.message-editor', article)) return;
-    const body = $('.message__body', article); const actions = $('.message-actions', article); const original = messageText(article);
-    body.hidden = true; actions.hidden = true;
-    const editor = document.createElement('div');
-    editor.innerHTML = '<textarea class="message-editor" aria-label="編輯訊息"></textarea><div class="edit-controls"><button class="cancel-edit" type="button">取消</button><button class="save-edit" type="button">儲存並送出</button></div>';
-    $('.message-editor', editor).value = original; article.insertBefore(editor, actions); $('.message-editor', editor).focus();
-    if (localModel) $('.save-edit', editor).textContent = '儲存修改';
-    $('.cancel-edit', editor).onclick = () => { editor.remove(); body.hidden = false; actions.hidden = false; };
-    $('.save-edit', editor).onclick = () => { const value = $('.message-editor', editor).value.trim(); if (!value) return; setMessageText(body, value); editor.remove(); body.hidden = false; actions.hidden = false; showToast('已更新訊息，舊回覆仍保留'); };
+    const body = $('.message__body', article);
+    const actions = $('.message-actions', article);
+    const original = messageText(article);
+    const prefix = original.startsWith(rewriteRequestPrefix) ? rewriteRequestPrefix : '';
+    const editor = document.createElement('form');
+    editor.className = 'message-edit-form';
+    editor.innerHTML = `
+      <textarea class="message-editor" aria-label="${prefix ? '編輯改寫要求' : '編輯訊息'}" required></textarea>
+      <p class="chat-status" role="status"></p>
+      <div class="edit-controls">
+        <button class="cancel-edit" type="button">取消</button>
+        <button class="save-edit" type="submit">儲存修改</button>
+      </div>`;
+    const field = $('.message-editor', editor);
+    const notice = $('[role="status"]', editor);
+    const save = $('.save-edit', editor);
+    const cancel = $('.cancel-edit', editor);
+    field.maxLength = prefix ? rewriteInstructionLimit : 8000;
+    field.value = original.slice(prefix.length);
+    body.hidden = true;
+    actions.hidden = true;
+    article.insertBefore(editor, actions);
+    field.focus();
+
+    function closeEditor() {
+      editor.remove();
+      body.hidden = false;
+      actions.hidden = false;
+      $('[data-action="edit"]', actions).focus({ preventScroll: true });
+    }
+    cancel.onclick = closeEditor;
+    editor.onsubmit = async event => {
+      event.preventDefault();
+      if (save.disabled) return;
+      const value = field.value.trim();
+      if (!value) {
+        notice.textContent = '請輸入修改後的文字。';
+        return;
+      }
+      notice.textContent = '';
+      field.readOnly = save.disabled = cancel.disabled = true;
+      try {
+        const updated = hosted
+          ? await hostedUi.editMessage(Number(article.dataset.messageIndex), original, value)
+          : prefix + value;
+        if (article.isConnected) {
+          setMessageText(body, updated);
+          closeEditor();
+          showToast('已儲存修改');
+        }
+      } catch (error) {
+        notice.textContent = error.message;
+      } finally {
+        field.readOnly = save.disabled = cancel.disabled = false;
+      }
+    };
   }
   function regenerate(article) {
     if (hosted) {
       if (article.dataset.legacyRewrite) {
-        openPanel('rewrite', { article, instruction: article.dataset.legacyRewrite });
+        const instruction = messageText(article.previousElementSibling).slice(rewriteRequestPrefix.length);
+        openPanel('rewrite', { article, instruction });
       } else {
         hostedUi.retryMessage(Number(article.dataset.messageIndex));
       }
@@ -822,23 +872,29 @@ import { chatContextLimit, generationParameters, replyStyles, rewriteInstruction
   function addMessage(text, who, targetChat = activeChat) {
     const article = document.createElement('article'); article.className = `message message--${who}`;
     article.innerHTML = who === 'user'
-      ? '<div class="message__body"></div><div class="message-actions"><button type="button" data-action="copy"><i class="fa-solid fa-copy"></i><span>複製</span></button><button type="button" data-action="edit"><i class="fa-solid fa-pen"></i><span>編輯</span></button></div>'
-      : '<div class="message__identity"><div class="assistant-avatar assistant-avatar--small"><i class="fa-solid fa-feather-pointed"></i></div><div><strong>書店寫作助手</strong><small>剛剛</small></div></div><div class="message__body"></div><div class="message-actions"><button class="copy-reply" type="button" data-action="copy"><i class="fa-solid fa-copy" aria-hidden="true"></i><span>複製全文</span></button></div>';
+      ? `<div class="message__body"></div><div class="message-actions">
+          <button type="button" data-action="copy" aria-label="複製" title="複製"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>
+          <button type="button" data-action="edit" aria-label="編輯" title="編輯"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        </div>`
+      : `<div class="message__identity"><div class="assistant-avatar assistant-avatar--small"><i class="fa-solid fa-feather-pointed"></i></div><div><strong>書店寫作助手</strong><small>剛剛</small></div></div>
+        <div class="message__body"></div><div class="message-actions">
+          <button class="copy-reply" type="button" data-action="copy" aria-label="複製全文" title="複製全文"><i class="fa-solid fa-copy" aria-hidden="true"></i></button>
+        </div>`;
     const body = $('.message__body', article);
     setMessageText(body, text);
     if (who === 'assistant' && (localModel || hosted)) {
       $('.message-actions', article).insertAdjacentHTML('beforeend',
-        '<button class="rewrite-reply" type="button" data-action="rewrite"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i><span>改寫選取文字</span></button>');
+        '<button type="button" data-action="rewrite" aria-label="改寫選取文字" title="改寫選取文字"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></button>');
     }
     if (who === 'assistant' && hosted) {
       $('.message-actions', article).insertAdjacentHTML('beforeend',
-        '<button class="retry-reply" type="button" data-action="regenerate"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span>重新回覆</span></button>');
+        '<button type="button" data-action="regenerate" aria-label="重新回覆" title="重新回覆"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i></button>');
     }
     if (localModel && who === 'assistant') {
       body.classList.add('version-content');
       $('.message__identity strong', article).textContent = localModel.model;
       $('.message-actions', article).insertAdjacentHTML('beforeend', `
-        <button type="button" data-action="regenerate" title="重新回覆"><i class="fa-solid fa-rotate-right"></i><span>重新回覆</span></button>
+        <button type="button" data-action="regenerate" aria-label="重新回覆" title="重新回覆"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i></button>
         <div class="version-switch" hidden>
           <button type="button" data-version-nav="prev" aria-label="上一個版本">‹</button>
           <span class="version-label"></span>
